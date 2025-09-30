@@ -1,0 +1,87 @@
+services:
+    nginx:
+        image: nginx:1.29
+        ports:
+            - "${WEB_PORT:-8080}:80"
+        volumes:
+            - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+            # Media and static files
+            - static_files:/static
+            - ./data:/data
+        depends_on:
+            # - ghost
+            - web
+    #
+    # ghost:
+    #     image: ghost:6.0-alpine
+    #     env_file: [.env]
+    #     expose:
+    #         - "2368"
+    #     volumes:
+    #         - ghost_data:/var/lib/ghost/content
+    #         - ./ghost/default.hbs:/var/lib/ghost/content/themes/source/default.hbs
+    #         - ./ghost/partials/announcement-bar.hbs:/var/lib/ghost/content/themes/source/partials/announcement-bar.hbs
+    #         - ./ghost/partials/components/footer.hbs:/var/lib/ghost/content/themes/source/partials/components/footer.hbs
+    #         - ./ghost/partials/components/post-list.hbs:/var/lib/ghost/content/themes/source/partials/components/post-list.hbs
+    #         - ./ghost/partials/components/tracking.hbs:/var/lib/ghost/content/themes/source/partials/components/tracking.hbs
+    #
+    # mailpit:
+    #     image: axllent/mailpit:v1.27
+    #     container_name: mailpit
+    #     restart: unless-stopped
+    #     ports:
+    #         - "1025:1025" # SMTP
+    #         - "8025:8025" # Web UI
+    #
+    web:
+        build: .
+        # user: "${DOCKER_WEB_USER:-bca}"
+        restart: always
+        env_file: [.env]
+        command: ["./entrypoint.sh"]
+        ports:
+            - 8000:8000
+        volumes:
+            - ./entrypoint.sh:/usr/src/app/entrypoint.sh
+            # Update Django files in real-time
+            - .:/usr/src/app
+            # Media and static files
+            - static_files:/usr/src/app/static
+            - ./data:/usr/src/app/data
+        depends_on:
+            db:
+                condition: service_healthy
+
+    db:
+        image: postgres:17
+        restart: always
+        env_file: [.env]
+        command: |
+            postgres
+                -c max_wal_size=2GB
+                -c maintenance_work_mem=4GB
+                -c work_mem=64MB
+        volumes:
+            - db_data:/var/lib/postgresql/data
+            - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
+            - /data/bca/dumps/pg_backup:/pg_backup_dir
+        ports:
+            - "${DB_PORT:-5432}:5432"
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "pg_isready",
+                    "-d",
+                    "${POSTGRES_DB}",
+                    "-U",
+                    "${POSTGRES_USER}",
+                ]
+            interval: 1s
+            timeout: 5s
+            retries: 10
+
+volumes:
+    db_data:
+    static_files:
+    # ghost_data:
