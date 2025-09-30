@@ -27,6 +27,7 @@ services:
 
     mailpit:
         image: axllent/mailpit:v1.27
+        env_file: [.env]
         container_name: mailpit
         restart: unless-stopped
         ports:
@@ -35,7 +36,7 @@ services:
 
     web:
         build: .
-        user: "${DOCKER_WEB_USER:-bca}"
+        # user: "${DOCKER_WEB_USER:-bca}"
         restart: always
         env_file: [.env]
         command: ["./entrypoint.sh"]

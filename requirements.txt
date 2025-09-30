@@ -2,6 +2,10 @@ Django==5.2.6
 django-colorfield==0.14.0
 gunicorn==23.0.0
 
+# Blog parsing
+beautifulsoup4==4.13.5
+feedparser==6.0.12
+
 # Reference pages
 mistune==3.1.4
 Pygments==2.19.2
@@ -10,6 +14,7 @@ Pygments==2.19.2
 djangorestframework==3.16.1
 django-filter==25.1
 drf-spectacular==0.28.0
+drf-orjson-renderer==1.7.3
 
 # Monitoring
 django-prometheus==2.4.1

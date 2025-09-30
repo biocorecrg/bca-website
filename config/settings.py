@@ -14,23 +14,26 @@ import os
 from pathlib import Path
 import secrets
 
-from .pre_settings import get_DIAMOND_version, get_env, get_latest_git_tag
+import orjson
+
+from .pre_settings import get_diamond_version, get_env, get_latest_git_tag
 
 # GLOBAL VARIABLES: registered in context_processors.py
-BCA_WEBSITE = "https://biodiversitycellatlas.org"
 BCA_DOMAIN = "biodiversitycellatlas.org"
-BCA_EMAIL = "bca@biodiversitycellatlas.org"
+BCA_WEBSITE = f"https://{BCA_DOMAIN}"
+BCA_EMAIL = f"bca@{BCA_DOMAIN}"
 FEEDBACK_URL = get_env("BCA_APP_FEEDBACK_URL", required=True)
 
 # Script should be adapted according to what is collected https://plausible.io/docs/plausible-script
-# PLAUSIBLE_SCRIPT = "https://stats.biodiversitycellatlas.org/js/script.file-downloads.hash.outbound-links.pageview-props.tagged-events.js"
+# PLAUSIBLE_SCRIPT = (
+#     f"https://stats.{BCA_DOMAIN}/js/"
+#     "script.file-downloads.hash.outbound-links.pageview-props.tagged-events.js"
+# )
 
 GITHUB_URL = "https://github.com/biodiversitycellatlas/bca-website"
-GITHUB_ISSUES_URL = GITHUB_URL + "/issues/new"
 GIT_VERSION = get_latest_git_tag()
-GIT_VERSION_URL = f"{GITHUB_URL}/releases/tag/{GIT_VERSION}"
 
-DIAMOND_VERSION = get_DIAMOND_version()
+DIAMOND_VERSION = get_diamond_version()
 
 # Max sequences for alignment
 MAX_ALIGNMENT_SEQS = get_env("BCA_APP_MAX_ALIGNMENT_SEQS", 100, type="int")
@@ -42,8 +45,6 @@ MAX_FILE_SIZE = get_env("BCA_APP_MAX_FILE_SIZE", 10, type="int")
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 ALLOWED_HOSTS = get_env("DJANGO_ALLOWED_HOSTS", "", type="array")
 DEBUG = get_env("DJANGO_DEBUG", type="bool")
@@ -58,6 +59,7 @@ if get_env("ENVIRONMENT") == "prod":
         SECRET_KEY = secrets.token_hex(50)
 
     SECURE_SSL_REDIRECT = True
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = 30
@@ -189,10 +191,15 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_PAGINATION_CLASS": "rest.pagination.StandardPagination",
     "DEFAULT_RENDERER_CLASSES": [
-        "rest_framework.renderers.JSONRenderer",
+        "drf_orjson_renderer.renderers.ORJSONRenderer",
         "rest.renderers.CSVRenderer",
         "rest.renderers.TSVRenderer",
     ],
+    "ORJSON_RENDERER_OPTIONS": (
+        orjson.OPT_NON_STR_KEYS,
+        orjson.OPT_SERIALIZE_DATACLASS,
+        orjson.OPT_SERIALIZE_NUMPY,
+    ),
 }
 
 
