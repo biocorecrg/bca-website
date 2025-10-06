@@ -3,7 +3,7 @@ django-colorfield==0.14.0
 gunicorn==23.0.0
 
 # Blog parsing
-beautifulsoup4==4.13.5
+beautifulsoup4==4.14.2
 feedparser==6.0.12
 
 # Reference pages
@@ -23,7 +23,7 @@ django-prometheus==2.4.1
 django-debug-toolbar==5.2.0
 django-extensions==4.1
 pandas==2.3.2
-psutil==7.0.0
+psutil==7.1.0
 psycopg2==2.9.10
 rds2py==0.7.3
 scipy==1.15.3
