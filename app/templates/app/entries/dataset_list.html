@@ -14,19 +14,19 @@
         Dataset
     </th>
     <th>
-        Species common name
+        Source
     </th>
 {% endblock header %}
 
 {% block row %}
     <td>
-        {{ each.get_html_link }}
+        {{ each.get_named_html_link }}
     </td>
     <td>
-        {{ each.species.common_name|default:'—' }}
+        {{ each.publication.get_source_html_link }}
     </td>
 {% endblock row %}
 
 {% block unfound %}
-    No species found.
+    No datasets found.
 {% endblock unfound %}

@@ -16,7 +16,7 @@ Input:
 {% endcomment %}
 
 {% block title %}
-    {{ dataset }} Information
+    {{ dataset }}
 {% endblock title %}
 
 {% block content %}
@@ -33,7 +33,7 @@ Input:
     </style>
 
     {% load static %}
-    {% include '../components/warning_alert.html' %}
+    {% include "../components/warning_alert.html" %}
 
     <div class="row">
         <div class="col-md-4">
@@ -51,7 +51,15 @@ Input:
                 <tbody>
                     <tr>
                         <td>
-                            <span class="key">Release date</span>
+                            <span class="key">Source</span>
+                        </td>
+                        <td class="text-end">
+                            {{ dataset.publication.get_source_html_link|default:'<span class="text-secondary small fst-italic">Not available</span>' }}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span class="key">Processed</span>
                         </td>
                         <td class="text-end">
                             {{ dataset.date_created|date:"j F Y" }}
@@ -152,11 +160,11 @@ Input:
 
             <div class="row mt-3">
                 <div class="col-md-6">
-                    {% include '../components/plot_container.html' with id='metacell-cells' height='270px' %}
+                    {% include "../components/plot_container.html" with id="metacell-cells" height="270px" %}
                 </div>
 
                 <div class="col-md-6">
-                    {% include '../components/plot_container.html' with id='metacell-umis' height='270px' %}
+                    {% include "../components/plot_container.html" with id="metacell-umis" height="270px" %}
                 </div>
             </div>
 
@@ -172,7 +180,7 @@ Input:
         </div>
     </div>
     <script type="module">
-        import { loadDatasetStats, renderStatsPlots } from "{% static 'app/js/atlas/stats.js' %}";
+        import { loadDatasetStats, renderStatsPlots } from "{% static 'app/dist/atlas/stats.js' %}";
         loadDatasetStats("{{dataset.slug}}");
         renderStatsPlots("{{dataset.slug}}");
     </script>

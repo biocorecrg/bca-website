@@ -7,6 +7,22 @@
 {% block heading %}
     {% load entry_links %}
     {% render_header_counter gene_list paginator species %}
+    <style>
+    .select-width {
+        width: 600px;
+    }
+    </style>
+    <div class="row g-2 mb-4 align-items-start">
+        <div class="d-flex justify-content-between align-items-center small">
+            <label class="col-form-label">
+                <i class="fa fa-kiwi-bird fa-fw"></i>
+                Filter species
+            </label>
+        </div>
+        <div class="col-auto select-width">
+            {% include "app/components/select/species.html" with redirect="arg" placeholder="Search..." species=species view="gene_list_entry" extraParams=gene_list %}
+        </div>
+    </div>
 {% endblock heading %}
 
 {% block header %}
@@ -23,9 +39,6 @@
     {% if not species %}
         <th>
             Species
-        </th>
-        <th>
-            Species common name
         </th>
     {% endif %}
 {% endblock header %}
@@ -45,9 +58,6 @@
         {% load entry_links %}
         <td>
             {% species_genelist_link each.species gene_list %}
-        </td>
-        <td>
-            {{ each.species.common_name|default:'—' }}
         </td>
     {% endif %}
 {% endblock row %}

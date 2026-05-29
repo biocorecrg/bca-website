@@ -1,21 +1,56 @@
 version: 2
+registries:
+    dhi:
+        type: docker-registry
+        url: https://dhi.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+        replaces-base: true
+
 updates:
     - package-ecosystem: "pip"
       directory: "/"
       schedule:
           interval: "weekly"
+      cooldown:
+          default-days: 7
+      ignore:
+          # Ignore non-LTS Django updates
+          - dependency-name: "django"
+            versions: ["[6.0,6.2)", "[7.0,7.2)"]
+
+    - package-ecosystem: "bun"
+      directory: "/"
+      schedule:
+          interval: "weekly"
+      cooldown:
+          default-days: 7
 
     - package-ecosystem: "docker"
+      registries:
+          - dhi
       directory: "/"
       schedule:
           interval: "weekly"
+      cooldown:
+          default-days: 7
+      ignore:
+          - dependency-name: "postgres"
 
     - package-ecosystem: "docker-compose"
+      registries:
+          - dhi
       directory: "/"
       schedule:
           interval: "weekly"
+      cooldown:
+          default-days: 7
+      ignore:
+          - dependency-name: "postgres"
 
     - package-ecosystem: "github-actions"
       directory: "/"
       schedule:
           interval: "weekly"
+      cooldown:
+          default-days: 7

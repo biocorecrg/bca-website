@@ -26,7 +26,7 @@ Input:
 
 <style>
     #dataset-select-{{ id }} {
-        margin-bottom: 23px !important;
+        margin-bottom: 15px !important;
         visibility: hidden;
         max-width: 200px;
         {% if width %} width: {{ width }} !important; {% endif %}
@@ -37,7 +37,7 @@ Input:
     }
 </style>
 
-<!-- Make select invisible and with margin of 30px to avoid Flash Of Unstyled Content (FOUC) -->
+<!-- Make select invisible and with margin of 15px to avoid Flash Of Unstyled Content (FOUC) -->
 <select id="dataset-select-{{ id }}"
         class="mb-2 {{ class }} {% if small == 'true' %}small{% endif %}"
         placeholder="{{ placeholder|default:'Search datasets by species, taxonomic rank, division, ...' }}">
@@ -61,14 +61,16 @@ Input:
     {% endfor %}
 </select>
 
-<!-- Species selection: selectize.js JavaScript options -->
+<!-- Species select options -->
 <script type="module">
     {% load static %}
-    import { initDatasetSelectize } from "{% static 'app/js/select/dataset.js' %}";
+    import { initDatasetSelect } from "{% static 'app/dist/select/dataset.js' %}";
     let id = "{{id}}",
         dataset = "{{dataset.slug}}",
         query = "{{query.dataset}}",
         redirect = "{{redirect}}",
-        optgroup_columns = "{{optgroup_columns}}" === "true";
-    initDatasetSelectize(id, dataset, query, redirect, optgroup_columns);
+        optgroup_columns = "{{optgroup_columns}}" === "true",
+        view = "{{view}}",
+        anchor = "{{anchor}}";
+    initDatasetSelect(id, dataset, query, redirect, optgroup_columns, view, anchor);
 </script>

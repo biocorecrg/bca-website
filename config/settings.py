@@ -13,22 +13,21 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 import os
 from pathlib import Path
 import secrets
+import sys
 
 import orjson
 
 from .pre_settings import get_diamond_version, get_env, get_latest_git_tag
+from rest.settings import sort_api_tags
 
 # GLOBAL VARIABLES: registered in context_processors.py
 BCA_DOMAIN = "biodiversitycellatlas.org"
 BCA_WEBSITE = f"https://{BCA_DOMAIN}"
 BCA_EMAIL = f"bca@{BCA_DOMAIN}"
 FEEDBACK_URL = get_env("BCA_APP_FEEDBACK_URL", required=True)
+GHOST_INTERNAL_URL = get_env("GHOST_INTERNAL_URL", "http://ghost:2368")
 
-# Script should be adapted according to what is collected https://plausible.io/docs/plausible-script
-# PLAUSIBLE_SCRIPT = (
-#     f"https://stats.{BCA_DOMAIN}/js/"
-#     "script.file-downloads.hash.outbound-links.pageview-props.tagged-events.js"
-# )
+PLAUSIBLE_SCRIPT_URL = get_env("PLAUSIBLE_SCRIPT_URL", default=None)
 
 GITHUB_URL = "https://github.com/biodiversitycellatlas/bca-website"
 GIT_VERSION = get_latest_git_tag()
@@ -96,10 +95,14 @@ MIDDLEWARE = [
     "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
-if DEBUG:
+TESTING = "test" in sys.argv or "PYTEST_VERSION" in os.environ
+if DEBUG and not TESTING:
     INSTALLED_APPS += ["debug_toolbar"]
     MIDDLEWARE = ["debug_toolbar.middleware.DebugToolbarMiddleware"] + MIDDLEWARE
-    INTERNAL_IPS = get_env("DJANGO_INTERNAL_IPS", "", type="array")
+    INTERNAL_IPS = type("c", (), {"__contains__": lambda *a: True})()
+    DEBUG_TOOLBAR_CONFIG = {
+        "SHOW_TOOLBAR_CALLBACK": "debug_toolbar.middleware.show_toolbar_with_docker",
+    }
 
 ROOT_URLCONF = "config.urls"
 
@@ -126,16 +129,27 @@ WSGI_APPLICATION = "config.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django_prometheus.db.backends.postgresql",
-        "NAME": get_env("POSTGRES_DB"),
-        "USER": get_env("POSTGRES_USER"),
-        "PASSWORD": get_env("POSTGRES_PASSWORD"),
-        "HOST": get_env("POSTGRES_HOST"),
-        "PORT": get_env("POSTGRES_PORT"),
+POSTGRES_SERVICE = get_env("POSTGRES_SERVICE")
+
+# Django bug: services not supported in tests: https://code.djangoproject.com/ticket/33685
+if POSTGRES_SERVICE and not TESTING:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django_prometheus.db.backends.postgresql",
+            "OPTIONS": {"service": POSTGRES_SERVICE},
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django_prometheus.db.backends.postgresql",
+            "NAME": get_env("POSTGRES_DB"),
+            "USER": get_env("POSTGRES_USER"),
+            "PASSWORD": get_env("POSTGRES_PASSWORD"),
+            "HOST": get_env("POSTGRES_HOST"),
+            "PORT": get_env("POSTGRES_PORT"),
+        }
+    }
 
 
 # Password validation
@@ -171,6 +185,15 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 # https://docs.djangoproject.com/en/5.1/topics/files/
 
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "config.storage.JSModuleManifestStorage",
+    },
+}
+
 STATIC_URL = "static/"
 STATIC_ROOT = os.path.join(BASE_DIR, "static")
 
@@ -202,21 +225,14 @@ REST_FRAMEWORK = {
     ),
 }
 
-
-def sort_api_tags(operation):
-    """Sort API tags."""
-
-    return ["Species", "Gene", "Metacell", "Single cell", "Sequence alignment"]
-
-
 SPECTACULAR_SETTINGS = {
     "TITLE": "Biodiversity Cell Atlas: Data Portal API",
     "DESCRIPTION": "Fetch pre-processed and processed [BCA](/) data",
-    "CONTACT": {"name": "BCA", "url": "/about"},
-    "TOS": "/about/legal",
+    "CONTACT": {"name": "BCA", "url": f"{BCA_WEBSITE}/about"},
+    "TOS": f"{BCA_WEBSITE}/legal",
     "VERSION": get_env("BCA_REST_VERSION"),
     "SERVE_INCLUDE_SCHEMA": False,
-    "SORT_OPERATIONS": sort_api_tags,
+    "TAGS": sort_api_tags(),
 }
 
 # Logging in console
@@ -232,6 +248,10 @@ if get_env("DJANGO_LOGGING", type="bool"):
             },
         },
         "loggers": {
+            "django.request": {
+                "handlers": ["console"],
+                "level": "DEBUG",
+            },
             "django.db.backends": {
                 "handlers": ["console"],
                 "level": "DEBUG",

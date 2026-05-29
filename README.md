@@ -1,33 +1,64 @@
 # Biodiversity Cell Atlas website and data portal
 
-The [Biodiversity Cell Atlas][] is a coordinated international effort aimed at molecularly characterizing cell types across the eukaryotic tree of life. Our mission is to pave the way for the efficient expansion of cell atlases to hundreds of species.
+[![website][]][website-link]
+[![build][]][build-link]
+[![codecov][]][codecov-link]
+[![docker][]][docker-link]
+
+[website]: https://img.shields.io/badge/website-biodiversitycellatlas.org-blue
+[website-link]: https://biodiversitycellatlas.org
+[build]: https://img.shields.io/github/actions/workflow/status/biodiversitycellatlas/bca-website/tests.yml?logo=github&logoColor=white
+[build-link]: https://github.com/biodiversitycellatlas/bca-website/actions/workflows/tests.yml
+[codecov]: https://img.shields.io/codecov/c/github/biodiversitycellatlas/bca-website?logo=codecov&logoColor=white
+[codecov-link]: https://codecov.io/gh/biodiversitycellatlas/bca-website
+[docker]: https://img.shields.io/badge/docker-ghcr.io/biodiversitycellatlas/bca--website-blue?logo=docker&logoColor=white
+[docker-link]: https://github.com/biodiversitycellatlas/bca-website/pkgs/container/bca-website
+
+The [Biodiversity Cell Atlas][] is a coordinated international effort aimed at
+molecularly characterizing cell types across the eukaryotic tree of life. Our
+mission is to pave the way for the efficient expansion of cell atlases to
+hundreds of species.
 
 ## Overview
 
 This project uses:
 
-- [Podman Compose][] to manage multiple [Podman][] containers (using [docker-compose][Docker Compose] backend for compatibility)
-- [Ghost][], a blog-focused Content Management System (CMS) to setup the main website
-    - [Mailpit][] captures and provides a web interface to read Ghost transactional emails
-- [Django][], a high-level Python web framework setup using [Gunicorn][] to setup the data portal
-- [PostgreSQL][], a relational database
-- [Nginx][], a reverse proxy
+- [Podman Compose][] to manage multiple [Podman][] containers (using the
+  [docker-compose][Docker Compose] backend for compatibility)
+- [Nginx][] as a reverse proxy
+- [Ghost][] Content Management System (CMS) to serve the project website and blog
+  (see [`ghost/Dockerfile`](ghost/Dockerfile))
+    - [Mailpit][] to provide a web interface for Ghost transactional emails
+- [Django][] to power the Data Portal (see [`Dockerfile`](Dockerfile))
+  with the following dependencies:
+    - [Bun][] to build JavaScript and CSS assets from external libraries
+    - [DIAMOND][] to quickly align user-provided sequences
+    - [Gunicorn][] to serve the Django app in production
+- [PostgreSQL][] as the relational database system supporting the Data Portal
+- [Plausible][] to store visitor analytics
+
+The project configuration is defined in [`compose.yml`](compose.yml) and [`compose.prod.yml`](compose.prod.yml).
 
 ### Initial setup
 
 To set up the project and run the web app locally, first install:
 
-- [Podman][] — consider installing via [Podman Desktop][] to make it easier to manage Podman containers
+- [Podman][] — consider installing via [Podman Desktop][] to make it easier to
+  manage Podman containers
 - [docker-compose (standalone)][docker-compose] — Docker itself is not required
 
-Then, follow these steps:
+Then, download the project directory from GitHub and follow these steps:
 
 ```bash
 # Go to the project directory
 cd bca-website
 
-# Copy the .env.template to .env
-cp .env.template .env
+# Run setup.sh to setup configuration files from *.template files (edit them afterwards as needed):
+# env.template, nginx/nginx.conf, .pg_service.conf, .pgpass
+./scripts/setup.sh
+
+# Log in to the Docker Hardened Images registry using your Docker credentials
+podman login dhi.io
 
 # Start Podman Compose to locally deploy the web app
 # - Prepares, downloads and starts all containers
@@ -38,6 +69,18 @@ podman compose up -d --build
 # Create a superuser (only required once for database setup)
 podman compose exec web python manage.py createsuperuser
 ```
+
+#### Docker Hardened Images for GitHub Actions and Dependabot
+
+[Docker Hardened Images (DHI)][DHI] are security-hardened images provided by Docker.
+This repository uses images hosted on the `dhi.io` registry, so Docker
+authentication is required to run the project:
+
+1. Log in to your Docker account and [create a Personal Action Token (PAT)][Docker PAT]
+2. Add the following secrets to **GitHub Action** ([Settings → Secrets and variables → Actions][GitHub Actions secrets]):
+    - `DOCKER_USERNAME`: your Docker account username
+    - `DOCKER_PASSWORD`: your Docker PAT (not your account password)
+3. Add the same secrets to **Dependabot** ([Settings → Secrets and variables → Actions][Dependabot secrets])
 
 ### Development
 
@@ -83,21 +126,36 @@ After launching the service, the main website will be deployed to
 > If you are using proxies, localhost subdomains may need to be excluded in your
 > Proxy settings.
 
-#### Update static files
+### Production
 
-Static files are served by [Nginx][].
-
-If you need to manually update the static files (such as when editing them),
-run the [`collectstatic`][collectstatic] command:
+A dedicated Compose file (such as `compose.prod.yml`) can be used for
+production-specific settings:
 
 ```bash
-podman compose exec web python manage.py collectstatic --noinput
+# Set COMPOSE_FILE in .env: COMPOSE_FILE=compose.yml:compose.prod.yml
+# Deploy in production mode
+podman compose -d
 ```
 
-The `collectstatics` command runs automatically when the web app container starts,
-so you can simply run `podman compose restart web`.
+## Project website (Ghost)
 
-#### Update Django models
+The project website is built with the [Ghost][] blogging platform. Base templates
+in the [`ghost/`](ghost) folder modify the default theme.
+
+Transactional emails (like those sent to reset passwords and create new user
+accounts) can be read by opening the [Mailpit][] web interface at localhost:1025.
+
+## Data Portal (Django app)
+
+The Data Portal is powered by Django and its image is built from [`Dockerfile`](Dockerfile).
+The latest images are available on [GitHub Packages](https://github.com/biodiversitycellatlas/bca-website/pkgs/container/bca-website).
+
+The Data Portal is organized into two directories:
+
+- [app](app) contains the models and templates for the Data Portal
+- [rest](rest) contains the REST API code and its documentation
+
+### Update Django models
 
 To apply changes to Django models, run the [`migrate`][migrate] command:
 
@@ -110,23 +168,213 @@ development mode, so you can simply run `podman compose restart web`.
 The automatic command will not work if there is an issue that requires
 manual intervention.
 
-### Production
+### Update static files
 
-A dedicated Compose file (such as `compose.prod.yml`) can be used for production-specific settings:
+When you start the Compose project (`podman compose up web`),
+[`entrypoint.sh`](entrypoint.sh) runs [Bun][] to build JavaScript and
+CSS assets from TypeScript and external libraries, then runs Django
+to collect the static files. [Nginx][] automatically serves the
+collected files from the output folder.
+
+To manually update static files, you can also run these commands:
 
 ```bash
-# Set COMPOSE_FILE in .env: COMPOSE_FILE=compose.yml:compose.prod.yml
-# Deploy in production mode
-podman compose -d
+# Bun: install JS and CSS dependencies
+podman compose exec web bun install
+
+# Bun: build custom and third-party JS and CSS assets
+podman compose exec web bun run build
+
+# Django: collect all static files
+podman compose exec web python manage.py collectstatic --noinput
 ```
 
-## Ghost
+### Run unit tests
 
-The main website is built with the [Ghost][] blogging platform. Base templates
-in the [`ghost/`](ghost) folder modify the default theme.
+Run all Django unit tests to check the app's functionality:
 
-Transactional emails (like those sent to reset passwords and create new user
-accounts) can be read by opening [Mailpit][] web interface at localhost:1025.
+```bash
+podman compose exec web python manage.py test
+```
+
+You can verify the deployment configuration:
+
+```bash
+podman compose exec web python manage.py check-deploy
+```
+
+## Postgres database
+
+By default, the Django app uses the Postgres database service in
+[`compose.yml`](compose.yml). However, you can instead connect to any
+database by editing the Postgres files `.pg_service.conf` and `.pgpass`,
+and then changing to which database service to connect in `.env`:
+
+```bash
+POSTGRES_SERVICE=remote-bca-db
+```
+
+### Disable Postgres service
+
+In case the database service is not needed because you are connecting to an
+external database, edit the `.env` file to exclude the `db` profile:
+
+```bash
+# Change the following line to exclude the db service
+
+# COMPOSE_PROFILES=nginx,db
+COMPOSE_PROFILES=nginx
+```
+
+### Connect to database via SSH tunnel
+
+If the database can only be accessed via an intermediate host, you will
+need to connect to the host via an SSH tunnel:
+
+```bash
+ssh -fN -L 5432:db-host.com:5432 darwin@intermediate.host.com
+```
+
+To connect to the database through the SSH tunnel, use host `host.docker.internal`.
+You can configure your `.pg_service.conf` and `.pgpass` files like this:
+
+```bash
+[ssh-bca-db]
+host=host.docker.internal
+port=5432
+dbname=bca_db
+user=wallace
+```
+
+```bash
+host.docker.internal:5432:bca_db:wallace:mypassword
+```
+
+You can now start the project as usual via `podman compose up`.
+
+## Nginx
+
+To check the Nginx configuration that is going to be run:
+
+```bash
+podman compose exec nginx nginx -t
+```
+
+### Disable Nginx
+
+In case you want to disable the Nginx service, edit the `.env`
+file to exclude the `nginx` profile:
+
+```bash
+# Change the following line to exclude the nginx service
+
+# COMPOSE_PROFILES=nginx,db
+COMPOSE_PROFILES=db
+
+# If you don't need both the nginx and db services, simply delete the whole line
+```
+
+## Unit tests
+
+Unit tests are automatically run using Django and Bun for every pull request using
+GitHub Actions. Their coverage reports are then uploaded to [Codecov][codecov-link].
+
+The tests and coverage reports can also be manually run with the following commands.
+
+### Run Django tests
+
+Run all Django unit tests with:
+
+```bash
+# Locally deploy the web app
+podman compose up -d --build
+
+# Run Django tests and report coverage in HTML (open the HTML file with a web browser)
+podman compose exec web coverage run manage.py test
+podman compose exec web coverage html
+```
+
+### Run Bun tests for TypeScript files
+
+Run all TypeScript tests with Bun:
+
+```bash
+# Locally deploy the web app
+podman compose up -d --build
+
+# Run Bun tests and report coverage as text in the terminal
+podman compose exec web bun test --coverage
+
+# Run Bun tests in watch mode to automatically re-run tests on file changes
+podman compose exec web bun test --watch
+```
+
+### Run end-to-end tests
+
+```bash
+# Locally deploy the web app
+podman compose up -d --build
+
+# Run end-to-end tests with PyTest
+podman compose exec web pytest e2e/ -v
+```
+
+## Linters
+
+### Run djlint
+
+Check and lint Django templates using [djlint][]:
+
+```bash
+# Locally deploy the web app
+podman compose up -d --build
+
+# Show errors in Django  template files
+podman compose exec web djlint .
+
+# Automatically lint and reformat Django template files
+podman compose exec web djlint . --reformat
+```
+
+### Run autoprefixer
+
+Process CSS with [Autoprefixer][] to add vendor prefixes:
+
+```bash
+# Locally deploy the web app
+podman compose up -d --build
+
+# Process all CSS files and replace them in-place
+podman compose exec web bunx postcss ./**/*.css --use autoprefixer --no-map --replace
+```
+
+### Run Super-Linter
+
+[Super-Linter][] is run for every Pull Request. To run it locally using Podman,
+execute the following commands (the correct image is automatically pulled based
+on the version used in the [GitHub workflow](.github/workflows/linter.yml)):
+
+```bash
+# Run in check mode on changed files
+./superlinter.sh check
+
+# Run in fix mode on changed files
+./superlinter.sh fix
+
+# Run in fix mode on changed files using Python and JS linters only
+./superlinter.sh fix --python --js
+
+# Run in fix mode on all codebase
+./superlinter.sh fix --all
+
+# Print all available options
+./superlinter.sh
+```
+
+The environment files that Super-Linter automatically loads are available in
+[.github/linters](.github/linters):
+[super-linter.env](.github/linters/super-linter.env) and
+[super-linter-fix.env](.github/linters/super-linter-fix.env).
 
 ## Contact us
 
@@ -143,16 +391,25 @@ accounts) can be read by opening [Mailpit][] web interface at localhost:1025.
 [Podman Desktop]: https://podman-desktop.io
 [Docker Compose]: https://docs.docker.com/compose
 [docker-compose]: https://docs.docker.com/compose/install/standalone/
+[DHI]: https://www.docker.com/products/hardened-images/
+[Docker PAT]: https://docs.docker.com/security/access-tokens/
+[GitHub Actions secrets]: https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets
+[Dependabot secrets]: https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/manage-your-dependency-security/configuring-access-to-private-registries-for-dependabot#adding-a-repository-secret-for-dependabot
 [Django]: https://djangoproject.com
 [PostgreSQL]: https://postgresql.org
 [Nginx]: https://nginx.org
+[Plausible]: https://plausible.io
+[Bun]: https://bun.com
 [Gunicorn]: https://gunicorn.org
+[DIAMOND]: https://github.com/bbuchfink/diamond
 [Ghost]: https://ghost.org
 [Mailpit]: https://mailpit.axllent.org
-[collectstatic]: https://docs.djangoproject.com/en/5.2/ref/contrib/staticfiles/#collectstatic
 [migrate]: https://docs.djangoproject.com/en/dev/topics/migrations/
 [CRG]: https://crg.eu
 [EBI]: https://ebi.ac.uk/
 [Sanger]: https://sanger.ac.uk/
 [Moore]: https://moore.org
 [Biodiversity Cell Atlas]: https://biodiversitycellatlas.org
+[Autoprefixer]: https://autoprefixer.github.io
+[djlint]: https://djlint.com
+[Super-Linter]: https://github.com/super-linter/super-linter

@@ -1,6 +1,6 @@
 services:
     nginx:
-        image: nginx:1.29
+        image: dhi.io/nginx:1.29.7-debian13-dev
         ports:
             - "${WEB_PORT:-8080}:80"
         volumes:
@@ -11,22 +11,36 @@ services:
         depends_on:
             - ghost
             - web
+        profiles: ["nginx"]
 
     ghost:
-        image: ghost:6.1-alpine
+        build:
+            context: ghost
+            dockerfile: Dockerfile
+            args:
+                PLAUSIBLE_SCRIPT_URL: ${PLAUSIBLE_SCRIPT_URL}
         env_file: [.env]
         expose:
             - "2368"
         volumes:
             - ghost_data:/var/lib/ghost/content
-            - ./ghost/default.hbs:/var/lib/ghost/content/themes/source/default.hbs
-            - ./ghost/partials/announcement-bar.hbs:/var/lib/ghost/content/themes/source/partials/announcement-bar.hbs
-            - ./ghost/partials/components/footer.hbs:/var/lib/ghost/content/themes/source/partials/components/footer.hbs
-            - ./ghost/partials/components/post-list.hbs:/var/lib/ghost/content/themes/source/partials/components/post-list.hbs
-            - ./ghost/partials/components/tracking.hbs:/var/lib/ghost/content/themes/source/partials/components/tracking.hbs
+            - ./ghost/default.hbs:/var/lib/ghost/content.orig/themes/source/default.hbs
+            - ./ghost/partials/announcement-bar.hbs:/var/lib/ghost/content.orig/themes/source/partials/announcement-bar.hbs
+            - ./ghost/partials/components/footer.hbs:/var/lib/ghost/content.orig/themes/source/partials/components/footer.hbs
+            - ./ghost/partials/components/post-list.hbs:/var/lib/ghost/content.orig/themes/source/partials/components/post-list.hbs
+            - ./ghost/partials/components/tracking.hbs:/var/lib/ghost/content.orig/themes/source/partials/components/tracking.hbs
+        environment:
+            - url=${GHOST_URL}
+            - database__client=${GHOST_DATABASE_CLIENT}
+            - database__connection__filename=${GHOST_DATABASE_CONNECTION_FILENAME}
+            - security__staffDeviceVerification=${GHOST_SECURITY_STAFFDEVICEVERIFICATION}
+            - NODE_TLS_REJECT_UNAUTHORIZED=${GHOST_NODE_TLS_REJECT_UNAUTHORIZED}
+            - mail__options__host=${GHOST_MAIL_OPTIONS_HOST}
+            - mail__options__port=${GHOST_MAIL_OPTIONS_PORT}
+            - mail__transport=${GHOST_MAIL_TRANSPORT}
 
     mailpit:
-        image: axllent/mailpit:v1.27
+        image: axllent/mailpit:v1.29.5
         env_file: [.env]
         container_name: mailpit
         restart: unless-stopped
@@ -35,7 +49,9 @@ services:
             - "8025:8025" # Web UI
 
     web:
-        build: .
+        build:
+            context: .
+            target: dev
         # user: "${DOCKER_WEB_USER:-bca}"
         restart: always
         env_file: [.env]
@@ -49,37 +65,34 @@ services:
             # Media and static files
             - static_files:/usr/src/app/static
             - ./data:/usr/src/app/data
-        depends_on:
-            db:
-                condition: service_healthy
+            # Postgres files
+            - ./.pgpass:/postgres/.pgpass:ro
+            - ./.pg_service.conf:/postgres/.pg_service.conf:ro
+        environment:
+            - PGPASSFILE=/postgres/.pgpass
+            - PGSERVICEFILE=/postgres/.pg_service.conf
 
     db:
-        image: postgres:17.6-trixie
+        image: dhi.io/postgres:18.1-debian13-dev
         restart: always
         env_file: [.env]
-        command: |
-            postgres
-                -c max_wal_size=2GB
-                -c maintenance_work_mem=4GB
-                -c work_mem=64MB
         volumes:
-            - db_data:/var/lib/postgresql/data
+            - db_data:/var/lib/postgresql
             - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
+            - .pgpass:/var/lib/postgresql/.pgpass:ro
+            - .pg_service.conf:/var/lib/postgresql/.pg_service.conf:ro
+        environment:
+            - PGPASSFILE=/var/lib/postgresql/.pgpass
+            - PGSERVICEFILE=/var/lib/postgresql/.pg_service.conf
+            - POSTGRES_DB=bca
+            - POSTGRES_HOST=db
+            - POSTGRES_PORT=5432
+            - PGUSER=postgres
+            - POSTGRES_USER=postgres
+            - POSTGRES_PASSWORD=mypassword
         ports:
             - "${DB_PORT:-5432}:5432"
-        healthcheck:
-            test:
-                [
-                    "CMD-SHELL",
-                    "pg_isready",
-                    "-d",
-                    "${POSTGRES_DB}",
-                    "-U",
-                    "${POSTGRES_USER}",
-                ]
-            interval: 1s
-            timeout: 5s
-            retries: 10
+        profiles: ["db"]
 
 volumes:
     db_data:

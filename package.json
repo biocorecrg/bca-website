@@ -1,0 +1,34 @@
+{
+    "name": "portal",
+    "scripts": {
+        "clean:portal": "bun -e \"import { rm } from 'node:fs/promises'; await rm('app/static/app/dist', { recursive: true, force: true })\"",
+        "list:portal": "find app/static/app/src/ -type f -not -path '*/tests/*' -not -name '.*'",
+        "bundle:portal": "bun build $(bun run list:portal) --outdir app/static/app/dist --outbase app/static/app/src/ --sourcemap --minify --splitting --chunk-naming 'chunk-[hash].[ext]'",
+        "build:portal": "bun run clean:portal && bun run bundle:portal",
+        "build:rest": "bun build rest/static/rest/src/* --outdir rest/static/rest/dist --sourcemap --minify",
+        "build": "bun run build:portal && bun run build:rest"
+    },
+    "dependencies": {
+        "@fontsource/rubik": "5.2.8",
+        "@fortawesome/fontawesome-free": "7.2.0",
+        "@phosphor-icons/web": "2.1.2",
+        "autoprefixer": "10.5.0",
+        "bootstrap": "5.3.8",
+        "d3": "7.9.0",
+        "datatables.net-bs5": "2.3.7",
+        "datatables.net-rowgroup-bs5": "1.6.0",
+        "datatables.net-select-bs5": "3.1.3",
+        "ion-rangeslider": "2.3.1",
+        "jquery": "3.7.1",
+        "postcss": "8.5.14",
+        "postcss-cli": "11.0.1",
+        "tom-select": "2.6.1",
+        "vega-embed": "7.1.0"
+    },
+    "devDependencies": {
+        "@happy-dom/global-registrator": "20.9.0",
+        "@types/bun": "1.3.14"
+    },
+    "private": true,
+    "type": "module"
+}

@@ -1,21 +1,21 @@
+"""REST API views."""
+
+import logging
 import os
-import re
 import subprocess
 import tempfile
 from urllib.parse import unquote_plus
 
 from django.conf import settings
-from django.contrib.postgres.aggregates import ArrayAgg
 from django.db.models import Case, Count, IntegerField, Prefetch, Value, When
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, extend_schema
-from rest_framework import pagination, viewsets
+from rest_framework import viewsets, status
 from rest_framework.exceptions import NotFound
-from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 
+from app.managers import ExpressionDataManager
 from app import models
-
-from . import filters, serializers
+from . import filters, serializers, services
 from .utils import get_enum_description, get_path_param, parse_species_dataset
 
 
@@ -33,7 +33,8 @@ class BaseReadOnlyModelViewSet(viewsets.ReadOnlyModelViewSet):
         OpenApiParameter(
             "q",
             str,
-            description="Query string to filter results. The string will be searched and ranked across species' common name, scientific name and metadata.",
+            description="Query string to filter results. The string will be searched and "
+            + "ranked across species' common name, scientific name and metadata.",
             examples=[OpenApiExample("Example", value="mouse")],
         )
     ],
@@ -46,9 +47,7 @@ class SpeciesViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_url_kwarg = "species"
 
     def get_object(self):
-        self.kwargs[self.lookup_url_kwarg] = unquote_plus(
-            self.kwargs[self.lookup_url_kwarg]
-        )
+        self.kwargs[self.lookup_url_kwarg] = unquote_plus(self.kwargs[self.lookup_url_kwarg])
         return super().get_object()
 
     @extend_schema(
@@ -68,7 +67,8 @@ class SpeciesViewSet(viewsets.ReadOnlyModelViewSet):
         OpenApiParameter(
             "q",
             str,
-            description="Query string to filter results. The string will be searched and ranked across dataset's name and description.",
+            description="Query string to filter results. The string will be searched "
+            + "and ranked across dataset's name and description.",
             examples=[OpenApiExample("Example", value="adult")],
         )
     ],
@@ -144,6 +144,109 @@ class GeneListViewSet(BaseReadOnlyModelViewSet):
     lookup_field = "name"
 
 
+@extend_schema(summary="List modules", tags=["Gene module"])
+class GeneModuleViewSet(BaseReadOnlyModelViewSet):
+    """List gene modules."""
+
+    queryset = models.GeneModule.objects.all()
+    serializer_class = serializers.GeneModuleSerializer
+    filterset_class = filters.GeneModuleFilter
+    lookup_field = "name"
+
+
+@extend_schema(summary="List module membership", tags=["Gene module"])
+class GeneModuleMembershipViewSet(BaseReadOnlyModelViewSet):
+    """List gene membership in gene modules."""
+
+    queryset = models.GeneModuleMembership.objects.prefetch_related("module", "module__dataset", "gene")
+    serializer_class = serializers.GeneModuleMembershipSerializer
+    filterset_class = filters.GeneModuleMembershipFilter
+    lookup_field = "name"
+
+
+@extend_schema(
+    summary="List module similarity",
+    tags=["Gene module"],
+)
+class GeneModuleSimilarityViewSet(BaseReadOnlyModelViewSet):
+    """
+    List similarity between multiple gene modules across datasets.
+
+    For datasets from different species, comparisons are based on common [orthologs](#/operations/orthologs_list).
+    """
+
+    queryset = models.GeneModule.objects.prefetch_related("membership")
+    serializer_class = serializers.GeneModuleSimilaritySerializer
+    filterset_class = filters.GeneModuleSimilarityFilter
+    lookup_field = "name"
+    pagination_class = None
+
+    list_genes = False
+
+    def list(self, request, *args, **kwargs):
+        # Parse query parameters
+        dataset_slug = self.request.query_params.get("dataset")
+        dataset2_slug = self.request.query_params.get("dataset2") or dataset_slug  # if undefined, use dataset
+        module = self.request.query_params.get("module")
+        module2 = self.request.query_params.get("module2")
+        sort_modules = self.request.query_params.get("sort_modules") in ["true", "1", "True"]
+
+        dataset = parse_species_dataset(dataset_slug)
+        dataset2 = parse_species_dataset(dataset2_slug)
+
+        # Require modules when listing genes (to avoid slowdowns)
+        if self.list_genes and not (module and module2):
+            raise ValueError("Error: please define 'module' and 'module2' parameters")
+
+        # Check if selected gene modules exist
+        for m, d in ((module, dataset), (module2, dataset2)):
+            if m is not None and not d.gene_modules.filter(name=m).exists():
+                raise ValueError(f"Error: module {m} does not exist in {d}")
+
+        service = services.GeneModuleSimilarityService()
+        overlaps = service.compare(dataset, dataset2, module, module2, self.list_genes)
+
+        if self.list_genes:
+            # Already serialized
+            return Response(overlaps)
+
+        # Sort modules based on highest similarity score
+        if sort_modules:
+            overlaps = sorted(overlaps, key=lambda x: x["similarity"], reverse=True)
+
+        serializer = self.get_serializer(overlaps, many=True)
+        return Response(serializer.data)
+
+
+@extend_schema(
+    summary="List module similarity genes",
+    tags=["Gene module"],
+)
+class GeneModuleSimilarityGenesViewSet(GeneModuleSimilarityViewSet):
+    """
+    List unique and shared genes between gene modules across datasets.
+
+    For datasets from different species, comparisons are based on common [orthologs](#/operations/orthologs_list).
+    """
+
+    serializer_class = serializers.GeneModuleSimilarityGeneSerializer
+    filterset_class = filters.GeneModuleSimilarityGenesFilter
+
+    list_genes = True
+
+
+@extend_schema(summary="List module eigengenes", tags=["Gene module"])
+class GeneModuleEigengeneViewSet(BaseReadOnlyModelViewSet):
+    """List module eigengene values for each metacell."""
+
+    queryset = models.GeneModuleEigengene.objects.prefetch_related(
+        "module", "module__dataset", "metacell", "metacell__type"
+    )
+    serializer_class = serializers.GeneModuleEigengeneSerializer
+    filterset_class = filters.GeneModuleEigengeneFilter
+    lookup_field = "name"
+
+
 @extend_schema(
     summary="List genes",
     tags=["Gene"],
@@ -152,11 +255,7 @@ class GeneListViewSet(BaseReadOnlyModelViewSet):
             "genes",
             str,
             description=filters.GeneFilter().base_filters["genes"].label,
-            examples=[
-                OpenApiExample(
-                    "Example", value="Transcription factors,Pkinase,Tadh_P33902"
-                )
-            ],
+            examples=[OpenApiExample("Example", value="Transcription factors,Pkinase,Tadh_P33902")],
         ),
         OpenApiParameter(
             "q",
@@ -217,12 +316,8 @@ class SAMapViewSet(BaseReadOnlyModelViewSet):
 
         qs = queryset.annotate(
             order_flag=Case(
-                When(
-                    metacelltype__dataset=ds1, metacelltype2__dataset=ds2, then=Value(0)
-                ),
-                When(
-                    metacelltype__dataset=ds2, metacelltype2__dataset=ds1, then=Value(1)
-                ),
+                When(metacelltype__dataset=ds1, metacelltype2__dataset=ds2, then=Value(0)),
+                When(metacelltype__dataset=ds2, metacelltype2__dataset=ds1, then=Value(1)),
                 default=Value(2),  # fallback
                 output_field=IntegerField(),
             )
@@ -243,20 +338,16 @@ class OrthologCountViewSet(BaseReadOnlyModelViewSet):
         if orthogroup and not self.queryset.filter(orthogroup=orthogroup).exists():
             raise NotFound(detail=f"Orthogroup '{orthogroup}' not found.")
 
-        qs = (
-            self.queryset.values("species__scientific_name")
-            .annotate(count=Count("id"))
-            .order_by("-count")
-        )
+        qs = self.queryset.values("species__scientific_name").annotate(count=Count("id")).order_by("-count")
         return qs
 
 
 class ExpressionPrefetchMixin:
-    """Mixin to prefetch gene expression for single cell and metacell views."""
+    """Mixin to prefetch gene expression for metacell views."""
 
-    related_field = "scge"
-    expression_related_name = "scge"
-    expression_model = models.SingleCellGeneExpression
+    related_field = "mge"
+    expression_related_name = "mge"
+    expression_model = models.MetacellGeneExpression
 
     def get_queryset(self):
         gene = self.request.query_params.get("gene", None)
@@ -281,13 +372,26 @@ class ExpressionPrefetchMixin:
 
 
 @extend_schema(summary="List single cells", tags=["Single cell"])
-class SingleCellViewSet(ExpressionPrefetchMixin, BaseReadOnlyModelViewSet):
+class SingleCellViewSet(BaseReadOnlyModelViewSet):
     """List single cells for a given dataset."""
 
     queryset = models.SingleCell.objects.prefetch_related("metacell", "metacell__type")
     serializer_class = serializers.SingleCellSerializer
     filterset_class = filters.SingleCellFilter
     lookup_field = "name"
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context.update({"request": self.request})
+        dataset = context["request"].GET.get("dataset")
+        gene = context["request"].GET.get("gene")
+        if gene is None:
+            expression_dictionary = {}
+        else:
+            expression_data_manager = ExpressionDataManager(dataset, gene)
+            expression_dictionary = expression_data_manager.get_expression_dictionary()
+        context.update({"expression_dictionary": expression_dictionary})
+        return context
 
 
 @extend_schema(summary="List metacells", tags=["Metacell"])
@@ -298,10 +402,6 @@ class MetacellViewSet(ExpressionPrefetchMixin, BaseReadOnlyModelViewSet):
     serializer_class = serializers.MetacellSerializer
     filterset_class = filters.MetacellFilter
     lookup_field = "name"
-
-    related_field = "mge"
-    expression_related_name = "mge"
-    expression_model = models.MetacellGeneExpression
 
 
 @extend_schema(summary="List metacell links", tags=["Metacell"])
@@ -316,29 +416,46 @@ class MetacellLinkViewSet(BaseReadOnlyModelViewSet):
 @extend_schema(
     summary="List gene expression per single cell",
     tags=["Single cell", "Gene"],
+    request=serializers.SingleCellGeneExpressionSerializer,
     parameters=[
         OpenApiParameter(
-            "genes",
-            str,
-            description=filters.SingleCellGeneExpressionFilter()
-            .base_filters["genes"]
-            .label,
-            examples=[
-                OpenApiExample(
-                    "Example", value="Transcription factors,Pkinase,Tadh_P33902"
-                )
-            ],
-        )
+            "gene",
+            int,
+            "query",
+            True,
+            "gene name",
+            examples=[OpenApiExample("Example", value="Spolac_c99997_g1")],
+        ),
+        OpenApiParameter(
+            "dataset",
+            int,
+            "query",
+            True,
+            "dataset slug",
+            examples=[OpenApiExample("Example", value="spongilla-lacustris")],
+        ),
     ],
 )
-class SingleCellGeneExpressionViewSet(BaseReadOnlyModelViewSet):
-    """List gene expression data per single cell."""
+class SingleCellGeneExpressionViewSet(viewsets.GenericViewSet):
+    """List single-cell expression data for a gene in a dataset."""
 
-    queryset = models.SingleCellGeneExpression.objects.prefetch_related(
-        "single_cell", "gene", "gene__domains", "metacell", "metacell__type"
-    )
+    http_method_names = ["get"]
     serializer_class = serializers.SingleCellGeneExpressionSerializer
-    filterset_class = filters.SingleCellGeneExpressionFilter
+    queryset = models.SingleCellGeneExpression.objects.none()
+    filterset_class = None
+    pagination_class = None
+
+    def list(self, request, *args, **kwargs):
+        gene = request.query_params.get("gene")
+        dataset = request.query_params.get("dataset")
+        expression_data_manager = ExpressionDataManager(dataset, gene)
+        try:
+            data = expression_data_manager.create_singlecellexpression_models()
+            serializer = self.get_serializer(instance=data, many=True)
+            return Response(serializer.data)
+        except OSError:
+            logging.exception(f"Error reading expression data for {gene} in {dataset}")
+            return Response("detail: error reading expression data", status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @extend_schema(
@@ -348,21 +465,13 @@ class SingleCellGeneExpressionViewSet(BaseReadOnlyModelViewSet):
         OpenApiParameter(
             "genes",
             str,
-            description=filters.MetacellGeneExpressionFilter()
-            .base_filters["genes"]
-            .label,
-            examples=[
-                OpenApiExample(
-                    "Example", value="Transcription factors,Pkinase,Tadh_P33902"
-                )
-            ],
+            description=filters.MetacellGeneExpressionFilter().base_filters["genes"].label,
+            examples=[OpenApiExample("Example", value="Transcription factors,Pkinase,Tadh_P33902")],
         ),
         OpenApiParameter(
             "metacells",
             str,
-            description=filters.MetacellGeneExpressionFilter()
-            .base_filters["metacells"]
-            .label,
+            description=filters.MetacellGeneExpressionFilter().base_filters["metacells"].label,
             examples=[OpenApiExample("Example", value="12,30,Peptidergic1")],
         ),
     ],
@@ -386,17 +495,9 @@ class MetacellGeneExpressionViewSet(BaseReadOnlyModelViewSet):
             str,
             description=get_enum_description(
                 filters.CorrelatedGenesFilter().base_filters["ordering"].label,
-                dict(
-                    filters.CorrelatedGenesFilter()
-                    .base_filters["ordering"]
-                    .extra["choices"]
-                ),
+                dict(filters.CorrelatedGenesFilter().base_filters["ordering"].extra["choices"]),
             ),
-            enum=dict(
-                filters.CorrelatedGenesFilter()
-                .base_filters["ordering"]
-                .extra["choices"]
-            ),
+            enum=dict(filters.CorrelatedGenesFilter().base_filters["ordering"].extra["choices"]),
             examples=[OpenApiExample("Example", value="-pearson_r")],
         )
     ],
@@ -414,8 +515,10 @@ class CorrelatedGenesViewSet(BaseReadOnlyModelViewSet):
     tags=["Metacell"],
     parameters=[
         OpenApiParameter(
-            "metacells",
-            str,
+            name="metacells",
+            type=str,
+            location="query",
+            required=True,
             description=filters.MetacellMarkerFilter().base_filters["metacells"].label,
             examples=[OpenApiExample("Example", value="12,30,Peptidergic1")],
         )
@@ -437,21 +540,22 @@ class MetacellMarkerViewSet(BaseReadOnlyModelViewSet):
 
 @extend_schema(summary="List metacell counts", tags=["Metacell"])
 class MetacellCountViewSet(BaseReadOnlyModelViewSet):
-    queryset = models.MetacellCount.objects.prefetch_related(
-        "metacell", "metacell__type"
-    )
+    queryset = models.MetacellCount.objects.prefetch_related("metacell", "metacell__type")
     serializer_class = serializers.MetacellCountSerializer
     filterset_class = filters.MetacellCountFilter
 
 
 @extend_schema(
-    summary="Submit sequences for alignment",
-    description=f"Align query sequences against the protein sequences in the BCA database using [DIAMOND {settings.DIAMOND_VERSION}](https://github.com/bbuchfink/diamond).",
+    summary="Align sequences",
+    description="Align query sequences against the protein sequences in the BCA database "
+    + f"using [DIAMOND {settings.DIAMOND_VERSION}](https://github.com/bbuchfink/diamond).",
     tags=["Sequence alignment"],
 )
 class AlignViewSet(viewsets.ViewSet):
     serializer_class = serializers.AlignRequestSerializer
     limit = settings.MAX_ALIGNMENT_SEQS  # Limit number of sequences to align
+
+    examples = getattr(serializers.AlignRequestSerializer, "_spectacular_annotation", {}).get("examples", [])
 
     @extend_schema(
         parameters=[
@@ -460,27 +564,16 @@ class AlignViewSet(viewsets.ViewSet):
                 str,
                 location="query",
                 required=True,
-                enum=serializers.AlignRequestSerializer().fields["species"].choices,
-                description=serializers.AlignRequestSerializer()
-                .fields["species"]
-                .help_text,
+                description=serializers.AlignRequestSerializer().fields["species"].help_text,
+                examples=[OpenApiExample("Species", value=examples[0].value["species"])],
             ),
             OpenApiParameter(
                 "sequences",
                 str,
                 location="query",
                 required=True,
-                examples=[
-                    OpenApiExample("Single query", value="MSIWFSIAILSVLVPFVQLTPIRPRS"),
-                    OpenApiExample(
-                        "Multiple queries",
-                        summary="Multiple queries",
-                        value=">Query_1\\nMSLIRNYNYHLRSASLANASQLDT\\n>Query_2\\nMDSSTDIPCNCVEILTA\\n>Query_3\\nMDSLTDRPCNYVEILTA",
-                    ),
-                ],
-                description=serializers.AlignRequestSerializer()
-                .fields["sequences"]
-                .help_text,
+                examples=[OpenApiExample(e.name, value=e.value["sequences"]) for e in examples],
+                description=serializers.AlignRequestSerializer().fields["sequences"].help_text,
             ),
             OpenApiParameter(
                 "type",
@@ -488,9 +581,7 @@ class AlignViewSet(viewsets.ViewSet):
                 location="query",
                 required=True,
                 enum=serializers.AlignRequestSerializer().fields["type"].choices,
-                description=serializers.AlignRequestSerializer()
-                .fields["type"]
-                .help_text,
+                description=serializers.AlignRequestSerializer().fields["type"].help_text,
             ),
         ],
         operation_id="align_get",
@@ -522,42 +613,32 @@ class AlignViewSet(viewsets.ViewSet):
         """
         Align query sequences against proteome database from the species.
         """
-        s = models.Species.objects.filter(scientific_name=species).first()
-        db = s.files.filter(type="DIAMOND")
+        s = models.Species.objects.get(scientific_name=species)
+        db = s.files.filter(type="DIAMOND").first()
 
-        if not db.exists():
+        if db is None:
             raise ValueError(f"{species} does not have a DIAMOND database.")
-        else:
-            db = db.first()
 
         # Avoid literal newlines from GET request
         sequences = sequences.replace("\\n", "\n")
 
-        # Count lines up to a limit and get a sample from first 10 sequences
-        count = 0
-        sample = ""
+        # Check sequence limit
+        num_seq = 0
         for line in sequences.splitlines():
             if line.startswith(">"):
-                count = count + 1
-                if count > self.limit:
-                    raise ValueError(
-                        f"Query can only contain up to {self.limit} FASTA sequences"
-                    )
-            elif count <= 10:
-                sample = sample + line + "\n"
+                num_seq += 1
+                if num_seq > self.limit:
+                    raise ValueError(f"Query can only contain up to {self.limit} FASTA sequences")
 
-        # Check if sample is composed of amino acids or nucleotides
-        program = "blastp" if (type is None or type == "aminoacids") else "blastx"
+        program = "blastp" if type in (None, "aminoacids") else "blastx"
 
         # Write query sequences to temporary file
-        with tempfile.NamedTemporaryFile(
-            delete=False, mode="w", suffix=".fasta"
-        ) as temp_file:
-            if not sequences.startswith(">") or not sequences.startswith("@"):
-                temp_file.write(">query\n")
-            temp_file.write(sequences)
-            temp_file.write("\n")
-            query_path = temp_file.name
+        with tempfile.NamedTemporaryFile(delete=False, mode="w", suffix=".fasta") as query_file:
+            if not sequences.startswith((">", "@")):
+                query_file.write(">query\n")
+            query_file.write(sequences)
+            query_file.write("\n")
+            query_path = query_file.name
         out_path = tempfile.NamedTemporaryFile(suffix=".m8").name
 
         results = []
@@ -591,3 +672,91 @@ class AlignViewSet(viewsets.ViewSet):
                     os.remove(f)
 
         return results
+
+
+@extend_schema(
+    summary="Analyze GO enrichment",
+    tags=["Gene ontology"],
+)
+class EnrichmentAnalysisViewSet(viewsets.ViewSet):
+    """
+    Perform **Gene Ontology (GO) enrichment analysis** on a set of genes.
+
+    Background genes are derived from all the genes in the selected dataset's metacell gene expression.
+
+    > Processing may take 10+ seconds depending on input.
+    > Please use responsibly to avoid excessive server load.
+    """
+
+    queryset = models.Gene.objects.all()
+    serializer_class = serializers.EnrichmentAnalysisResponseSerializer
+    pagination_class = None
+
+    def _get_gene_names(self, qs):
+        model = qs.model
+
+        if qs.model == models.Gene:
+            value = "name"
+        elif hasattr(model, "genes"):
+            value = "genes__name"
+        elif hasattr(model, "gene"):
+            value = "gene__name"
+        return list(qs.values_list(value, flat=True).distinct())
+
+    def _prepare_gene_query(self, dataset, validated):
+        """Create array of gene names from genes, gene_modules and gene_lists."""
+        query = []
+
+        gene_names = validated.get("genes")
+        if gene_names:
+            genes = self._get_gene_names(dataset.species.genes.filter(name__in=gene_names))
+            if len(genes) == 0:
+                raise NotFound(detail=f"Genes {gene_names} not found.")
+            query += genes
+
+        gene_modules = validated.get("gene_modules")
+        if gene_modules:
+            genes = self._get_gene_names(dataset.gene_modules.filter(name__in=gene_modules))
+            if len(genes) == 0:
+                raise NotFound(detail=f"Gene modules {gene_modules} not found.")
+            query += genes
+
+        gene_lists = validated.get("gene_lists")
+        if gene_lists:
+            genes = self._get_gene_names(
+                models.GeneList.objects.filter(genes__species=dataset.species, name__in=gene_lists)
+            )
+            if len(genes) == 0:
+                raise NotFound(detail=f"Gene lists {gene_lists} not found.")
+            query += genes
+
+        return query
+
+    @extend_schema(
+        request=serializers.EnrichmentAnalysisRequestSerializer,
+        operation_id="enrichment_post",
+        responses={200: serializers.EnrichmentAnalysisResponseSerializer(many=True)},
+    )
+    def create(self, request, *args, **kwargs):
+        input_serializer = serializers.EnrichmentAnalysisRequestSerializer(data=request.data)
+        input_serializer.is_valid(raise_exception=True)
+        validated = input_serializer.validated_data
+
+        # Parse query parameters
+        dataset = parse_species_dataset(validated["dataset"])
+        genes = self._prepare_gene_query(dataset, validated)
+
+        qvalue = validated.get("qvalue", 0.05)
+        background = self._get_gene_names(dataset.mge)
+        obsolete = validated["obsolete"] or False
+
+        go_obo = models.GlobalFile.objects.get(type="go-basic-obo").file.path
+        emapper = dataset.species.files.get(type="eggnog-mapper").file.path
+
+        service = services.GeneOntologyEnrichmentService(
+            go_obo, emapper, background, qvalue=qvalue, methods=["bonferroni"], load_obsolete=obsolete
+        )
+        results = service.run(genes, sort=True)
+
+        serializer = self.serializer_class(results, many=True, context={"obsolete": obsolete})
+        return Response(serializer.data)

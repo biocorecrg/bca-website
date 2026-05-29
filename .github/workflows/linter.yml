@@ -18,20 +18,22 @@ jobs:
         runs-on: ubuntu-latest
         permissions:
             checks: write
+            statuses: write
+            pull-requests: write
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v5
+              uses: actions/checkout@v6
               with:
                   # needs full git history
                   fetch-depth: 0
                   persist-credentials: false
 
             - name: Load super-linter configuration
-              run: grep -v "^#" .github/super-linter.env >> "$GITHUB_ENV"
+              run: grep -v "^#" .github/linters/super-linter.env >> "$GITHUB_ENV"
 
             - name: Report all Super-Linter issues
-              uses: super-linter/super-linter@v8
+              uses: super-linter/super-linter@v8.6.0
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   VALIDATE_ALL_CODEBASE: ${{ github.event_name == 'workflow_dispatch' }}
@@ -44,18 +46,21 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v5
+              uses: actions/checkout@v6
               with:
                   # needs full git history
                   fetch-depth: 0
                   persist-credentials: false
 
             - name: Load super-linter configuration
-              run: grep -hv "^#" .github/super-linter{,-fix}.env >> "$GITHUB_ENV"
+              run: grep -hv "^#" .github/linters/super-linter{,-fix}.env >> "$GITHUB_ENV"
 
             - name: Lint files with Super-Linter
-              uses: super-linter/super-linter@v8
+              uses: super-linter/super-linter@v8.6.0
               continue-on-error: true
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  ENABLE_GITHUB_PULL_REQUEST_SUMMARY_COMMENT: false
 
             - name: Cleanup Super-Linter output
               run: |
@@ -78,7 +83,7 @@ jobs:
 
         steps:
             - name: Checkout code
-              uses: actions/checkout@v5
+              uses: actions/checkout@v6
               with:
                   fetch-depth: 0
                   persist-credentials: false
@@ -87,7 +92,7 @@ jobs:
               run: pip install djlint
 
             - name: Lint HTML files with djlint
-              run: djlint . --preserve-blank-lines --reformat
+              run: djlint . --reformat
               continue-on-error: true
 
             - name: Suggest changes
@@ -107,20 +112,18 @@ jobs:
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v5
+              uses: actions/checkout@v6
               with:
                   persist-credentials: false
 
-            - name: Setup node.js
-              uses: actions/setup-node@v5
-              with:
-                  node-version: "18"
+            - name: Setup Bun
+              uses: oven-sh/setup-bun@v2
 
-            - name: Install dependencies
-              run: npm install postcss postcss-cli autoprefixer
+            - name: Install JS/CSS dependencies
+              run: bun install
 
             - name: Lint CSS files with Autoprefixer
-              run: npx postcss ./**/*.css --use autoprefixer --no-map --replace
+              run: bunx postcss ./**/*.css --use autoprefixer --no-map --replace
 
             - name: Suggest changes
               uses: reviewdog/action-suggester@v1

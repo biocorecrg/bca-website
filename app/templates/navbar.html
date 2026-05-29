@@ -4,7 +4,7 @@ Navigation bar and search feature across BCA website
 
 Features:
 - Navbar with active state highlighting based on the current page
-- Search box (selectize.js) to search for datasets and genes using API endpoints
+- Search box to search for datasets and genes using API endpoints
 
 {% endcomment %}
 
@@ -60,11 +60,10 @@ Features:
                                href="{% url 'downloads' %}">Downloads</a>
                         </li>
 
-                        {% comment %}
                         <li class="nav-item">
-                            <a class="nav-link {% if url_name == 'reference' %}active{% endif %}" href="{% url 'reference' %}">Reference</a>
+                            <a class="nav-link {% if url_name == 'docs' %}active{% endif %}"
+                               href="{% url 'docs' %}">Docs</a>
                         </li>
-                        {% endcomment %}
 
                         {% load bca_website_links %}
                         <li class="nav-item">
@@ -154,9 +153,6 @@ Features:
 </div>
 
 <script type="module">
-    import { toggleAtlasSelectColumnView } from "{% static 'app/js/select/atlas.js' %}";
-    toggleAtlasSelectColumnView();
-
-    import { initSearch } from "{% static 'app/js/search/search_bar.js' %}";
+    import { initSearch } from "{% static 'app/dist/search/search_bar.js' %}";
     initSearch();
 </script>

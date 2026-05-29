@@ -22,10 +22,10 @@
         Domains
     </th>
     <th>
-        Species
+        Gene lists
     </th>
     <th>
-        Common name
+        Species
     </th>
 {% endblock header %}
 
@@ -37,13 +37,13 @@
         {{ each.gene.description|default:'—' }}
     </td>
     <td>
-        {{ each.gene.get_domain_html_links }}
+        {{ each.gene.get_domain_html_links|default:'—' }}
     </td>
     <td>
-        {{ each.gene.species.get_html_link }}
+        {{ each.gene.get_genelist_html_links|default:'—' }}
     </td>
     <td>
-        {{ each.gene.species.common_name|default:'—' }}
+        {{ each.gene.species.get_named_html_link }}
     </td>
 {% endblock row %}
 

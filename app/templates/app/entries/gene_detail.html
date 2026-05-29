@@ -17,7 +17,7 @@
             <hr />
 
             <p>
-                {{ gene.species.get_html_link }}
+                {{ gene.species.get_named_html_link }}
             </p>
 
             <h2 class="h4">
@@ -35,14 +35,14 @@
 
         <div class="col-md-8">
             <h2 class="h4">
-                Orthogroup
+                Orthogroups
             </h2>
 
             <p>
-                {% if gene.orthogroup %}
-                    {{ gene.get_orthogroup_html_link }}
+                {% if gene.orthogroups.all %}
+                    {{ gene.get_orthogroup_html_links }}
                 {% else %}
-                    No orthogroup.
+                    No orthogroups.
                 {% endif %}
             </p>
 
@@ -91,6 +91,9 @@
                     <thead>
                         <tr>
                             <th>
+                                Dataset
+                            </th>
+                            <th>
                                 Module
                             </th>
                             <th>
@@ -99,13 +102,16 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for module in gene.modules.all %}
+                        {% for member in gene.modules.all %}
                             <tr>
                                 <td>
-                                    {{ module.get_html_link }}
+                                    {% dataset_gene_link member.module.dataset gene %}
                                 </td>
                                 <td>
-                                    {{ module.membership_score }}
+                                    {{ member.module.get_html_link }}
+                                </td>
+                                <td>
+                                    {{ member.membership_score }}
                                 </td>
                             </tr>
                         {% endfor %}

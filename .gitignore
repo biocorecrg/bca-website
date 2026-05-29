@@ -1,3 +1,6 @@
+# nginx
+nginx*.conf
+
 # Django
 *.log
 *.pot
@@ -5,23 +8,38 @@
 __pycache__
 db.sqlite3
 media
+data/
+!scripts/data/
+
+# Django static files
+app/static/app/images/logos/BCA/PNG/*
+app/static/app/images/logos/BCA/EPS/*
+app/static/app/dist
+rest/static/rest/dist
+
+# Postgres
+.pg_service.conf
+.pgpass
+/pg_backup
 
 # Backup files
 *.bak
 .DS_Store
 *.RDS
-**/data
-app/static/app/images/logos/BCA/PNG/*
-app/static/app/images/logos/BCA/EPS/*
-
-# Environment
-.env*
-!.env.template
-/pg_backup
-/source
 
 # Linters
-/super-linter-output
-.lintr
-/node_modules
-package*.json
+super-linter-output
+node_modules
+.coverage
+htmlcov
+
+# SSL certificates
+*.crt
+*.key
+
+# Environment
+.ackrc
+.env*
+.venv
+!.env.template
+source/

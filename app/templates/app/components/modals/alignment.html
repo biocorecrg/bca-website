@@ -57,7 +57,12 @@ Input:
                                  src="{{ species.image_url }}"
                                  alt="Image of {{ species }}">
                             {{ species.get_html }}
-                            <a class="ps-1" href="{% url 'download_file' species.proteome.slug %}">{{ species.proteome.ext|upper }}</a>
+
+                            {% if species.proteome %}
+                                <a class="ps-1" href="{% url 'download_file' species.proteome.slug %}">
+                                    {{ species.proteome.ext|upper }}
+                                </a>
+                            {% endif %}
                         </span>
                     </div>
                 </div>
@@ -98,16 +103,12 @@ Input:
                     </label>
                     <div class="col-lg-10">
                         <div class="sequence-input border border-secondary-subtle rounded">
-                            <textarea type="textarea"
-                                      id="{{id}}_query"
-                                      rows="6"
-                                      required
-                                      class="sequence-textarea form-control font-monospace border-0 rounded-top p-2"
-                                      placeholder="FASTA sequences (maximum of {{ MAX_ALIGNMENT_SEQS }})"></textarea>
+                            <textarea type="textarea" id="{{id}}_query" rows="6" required class="sequence-textarea form-control font-monospace border-0 rounded-top p-2" placeholder="FASTA sequences (maximum of {{ MAX_ALIGNMENT_SEQS }})">
+                            </textarea>
                             <div class="d-flex justify-content-between small py-1 px-2 border-top border-secondary-subtle bg-light rounded-bottom">
                                 <button type="button"
                                         class="btn btn-link btn-sm"
-                                        onclick="$('#{{ id }}_upload').click();">
+                                        onclick="document.getElementById('{{ id }}_upload').click();">
                                     <span class="small">
                                         <i class="fa fa-file-lines"></i>
                                         Load from FASTA file...
@@ -147,11 +148,12 @@ Input:
                     Alignment results are saved as gene lists.
                 </p>
                 <span>
-                    <button class="btn btn-outline-primary"
+                    <button id="{{ id }}_{{ type }}_editor_btn"
+                            class="btn btn-outline-primary"
                             href="javascript:void(0);"
                             data-bs-toggle="modal"
                             data-bs-target="#{{ id }}_{{ type }}_editor">
-                        Previous results
+                        Show gene lists
                     </button>
                     <button type="submit"
                             class="btn btn-primary"
@@ -170,7 +172,7 @@ Input:
 <script type="module">
     {% load static %}
     import { uploadSequenceFile, highlightSequenceText, alignSequence }
-        from "{% static 'app/js/atlas/modals/alignment.js' %}";
+        from "{% static 'app/dist/atlas/modals/alignment.js' %}";
 
     const id = "{{id}}",
           maxMB = {{ MAX_FILE_SIZE }},

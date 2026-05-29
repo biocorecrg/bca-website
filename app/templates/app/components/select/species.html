@@ -25,11 +25,10 @@ Input:
 {% endcomment %}
 
 <!-- Make select invisible and with margin of 30px to avoid Flash Of Unstyled Content (FOUC) -->
-<select id="species-select"
+<select id="species-select-{{ id }}"
         class="mb-2 {{ class }}"
         style="margin-bottom: 23px !important;
-               visibility: hidden;
-               max-width: 200px"
+               visibility: hidden"
         placeholder="{{ placeholder|default:'Search species by nomenclature, taxonomic rank, division, ...' }}">
     <option value="">
     </option>
@@ -49,15 +48,18 @@ Input:
     {% endfor %}
 </select>
 
-<!-- Species selection: selectize.js JavaScript options -->
+<!-- Species select options -->
 <script type="module">
     {% load static %}
-    import { initSpeciesSelectize }
-        from "{% static 'app/js/select/species.js' %}";
-    $(function () {
-        let species = "{{species.slug}}",
+    import { initSpeciesSelect }
+        from "{% static 'app/dist/select/species.js' %}";
+    document.addEventListener('DOMContentLoaded', function() {
+        let id = "{{id}}",
+            species = "{{species.slug}}",
             redirect = "{{redirect}}",
-            optgroup_columns = "{{optgroup_columns}}" === "true";
-        initSpeciesSelectize(species, redirect, optgroup_columns);
+            optgroup_columns = "{{optgroup_columns}}" === "true",
+            view = "{{view}}",
+            extraParams = "{{extraParams}}";
+        initSpeciesSelect(id, species, redirect, optgroup_columns, view, extraParams);
     });
 </script>

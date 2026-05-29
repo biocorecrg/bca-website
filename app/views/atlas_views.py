@@ -131,31 +131,30 @@ class AtlasInfoView(BaseAtlasView):
         """Add quality control metrics."""
 
         context = super().get_context_data(**kwargs)
+        dataset = context["dataset"]
 
-        qc_values = (
-            context["dataset"]
-            .qc.annotate(name=F("metric__name"), description=F("metric__description"))
-            .values("name", "description", "value")
+        if not isinstance(dataset, Dataset):
+            return context
+
+        qc_values = dataset.qc.annotate(name=F("metric__name"), description=F("metric__description")).values(
+            "name", "description", "value"
         )
 
         qc_metrics = [
             {
-                "title": "Mapping and read quality",
-                "description": "Alignment, error rates, and sequencing performance.",
+                "title": "Mapping metrics",
                 "img_url": "https://images.unsplash.com/photo-1663895064411-fff0ab8a9797",
                 "img_author": "Javier Miranda",
                 "img_author_handle": "nuvaproductions",
             },
             {
-                "title": "Noise and contamination",
-                "description": "Background signals, technical artifacts, and cross-contamination.",
+                "title": "Quality metrics",
                 "img_url": "https://images.unsplash.com/photo-1535127022272-dbe7ee35cf33",
                 "img_author": "Michael Schiffer",
                 "img_author_handle": "michael_schiffer_design",
             },
             {
                 "title": "Cell metrics",
-                "description": "Gene counts, cell quality, and data consistency.",
                 "img_url": "https://images.unsplash.com/photo-1631556097152-c39479bbff93",
                 "img_author": "National Cancer Institute",
                 "img_author_handle": "nci",
@@ -213,6 +212,12 @@ class AtlasGeneView(BaseAtlasView):
         return context
 
 
+class AtlasGeneModuleView(BaseAtlasView):
+    """Gene modules page for a specific dataset."""
+
+    template_name = "app/atlas/modules.html"
+
+
 class AtlasPanelView(BaseAtlasView):
     """Gene panel page for selected metacells."""
 
@@ -251,9 +256,7 @@ class AtlasMarkersView(BaseAtlasView):
                 # get selected metacells
                 metacells = query["metacells"].split(",")
                 selected = list(
-                    dataset.metacells.filter(
-                        Q(name__in=metacells) | Q(type__name__in=metacells)
-                    )
+                    dataset.metacells.filter(Q(name__in=metacells) | Q(type__name__in=metacells))
                     .values_list("name", flat=True)
                     .distinct()
                 )
@@ -264,10 +267,7 @@ class AtlasMarkersView(BaseAtlasView):
             else:
                 context["warning"] = {
                     "title": "Invalid URL!",
-                    "description": (
-                        f"Missing <code>metacells</code> in your query: "
-                        f"<code>{query.urlencode()}</code>"
-                    ),
+                    "description": (f"Missing <code>metacells</code> in your query: <code>{query.urlencode()}</code>"),
                 }
         return context
 

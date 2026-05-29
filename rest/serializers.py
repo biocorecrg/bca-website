@@ -6,13 +6,12 @@ from operator import attrgetter
 
 from django.conf import settings
 from django.db.models import Avg, Max, Min, StdDev, Sum
-from drf_spectacular.utils import extend_schema_field
+from drf_spectacular.utils import extend_schema_field, extend_schema_serializer, OpenApiExample
+
 from rest_framework import serializers
 
 from app import models
-
 from .aggregates import PercentileCont
-from .utils import check_model_exists
 
 
 class MetaSerializer(serializers.ModelSerializer):
@@ -27,13 +26,23 @@ class MetaSerializer(serializers.ModelSerializer):
         fields = ["key", "value", "source", "query_url"]
 
 
-class FileSerializer(serializers.ModelSerializer):
+class SpeciesFileSerializer(serializers.ModelSerializer):
     """Species file serializer."""
 
     class Meta:
         """Meta configuration."""
 
-        model = models.File
+        model = models.SpeciesFile
+        fields = ["type", "file", "checksum"]
+
+
+class DatasetFileSerializer(serializers.ModelSerializer):
+    """Dataset file serializer."""
+
+    class Meta:
+        """Meta configuration."""
+
+        model = models.DatasetFile
         fields = ["type", "file", "checksum"]
 
 
@@ -47,23 +56,28 @@ class SourceSerializer(serializers.ModelSerializer):
         exclude = ["id"]
 
 
+class PublicationSerializer(serializers.ModelSerializer):
+    """Publication serializer."""
+
+    class Meta:
+        """Meta configuration."""
+
+        model = models.Publication
+        exclude = ["id"]
+
+
 class DatasetSerializer(serializers.ModelSerializer):
     """Dataset serializer."""
 
-    source = SourceSerializer()
-    species = serializers.CharField(
-        source="species.scientific_name", help_text="Species name."
-    )
+    publication = PublicationSerializer()
+    species = serializers.CharField(source="species.scientific_name", help_text="Species name.")
     dataset = serializers.CharField(source="name", help_text="Dataset name.")
-    dataset_html = serializers.CharField(
-        source="get_html_link", help_text="HTML representation of the dataset."
-    )
+    dataset_html = serializers.CharField(source="get_html_link", help_text="HTML representation of the dataset.")
+    files = DatasetFileSerializer(many=True, help_text="Supporting files.")
     species_common_name = serializers.CharField(source="species.common_name")
     species_image_url = serializers.CharField(source="species.image_url")
     species_description = serializers.CharField(source="species.description")
-    species_meta = MetaSerializer(
-        source="species.meta_set", many=True, help_text="Species metadata."
-    )
+    species_meta = MetaSerializer(source="species.meta_set", many=True, help_text="Species metadata.")
     species_html = serializers.CharField(source="species.get_html_link")
     slug = serializers.CharField(help_text="Dataset slug.")
 
@@ -77,8 +91,9 @@ class DatasetSerializer(serializers.ModelSerializer):
             "slug",
             "dataset_html",
             "description",
+            "files",
             "image_url",
-            "source",
+            "publication",
             "order",
             "date_created",
             "date_updated",
@@ -94,10 +109,8 @@ class SpeciesSerializer(serializers.ModelSerializer):
     """Serializer for Species model."""
 
     meta = MetaSerializer(source="meta_set", many=True, help_text="Species metadata.")
-    files = FileSerializer(many=True, help_text="Supporting files.")
-    datasets = DatasetSerializer(
-        many=True, help_text="Available datasets for the species."
-    )
+    files = SpeciesFileSerializer(many=True, help_text="Supporting files.")
+    datasets = DatasetSerializer(many=True, help_text="Available datasets for the species.")
     html = serializers.CharField(source="get_html_link")
 
     class Meta:
@@ -137,15 +150,9 @@ class SummaryStatsSerializer(serializers.ModelSerializer):
 class DatasetQualityControlSerializer(serializers.ModelSerializer):
     """Dataset quality control serializer."""
 
-    type = serializers.CharField(
-        source="metric.type", help_text="Quality control type."
-    )
-    metric = serializers.CharField(
-        source="metric.name", help_text="Quality control metric."
-    )
-    description = serializers.CharField(
-        source="metric.description", help_text="Quality control description."
-    )
+    type = serializers.CharField(source="metric.type", help_text="Quality control type.")
+    metric = serializers.CharField(source="metric.name", help_text="Quality control metric.")
+    description = serializers.CharField(source="metric.description", help_text="Quality control description.")
 
     class Meta:
         """Meta configuration."""
@@ -157,27 +164,17 @@ class DatasetQualityControlSerializer(serializers.ModelSerializer):
 class StatsSerializer(serializers.ModelSerializer):
     """Statistics serializer."""
 
-    species = serializers.CharField(
-        source="species.scientific_name", help_text="Species scientific name."
-    )
+    species = serializers.CharField(source="species.scientific_name", help_text="Species scientific name.")
     dataset = serializers.CharField(source="name", help_text="Dataset name.")
     cells = serializers.SerializerMethodField(help_text="Number of cells.")
     metacells = serializers.SerializerMethodField(help_text="Number of metacells.")
-    umis = serializers.SerializerMethodField(
-        help_text="Number of unique molecular identifiers (UMIs)."
-    )
+    umis = serializers.SerializerMethodField(help_text="Number of unique molecular identifiers (UMIs).")
     genes = serializers.SerializerMethodField(help_text="Number of genes.")
 
-    umis_per_metacell = serializers.SerializerMethodField(
-        help_text="Summary statistics on UMIs per metacell."
-    )
-    cells_per_metacell = serializers.SerializerMethodField(
-        help_text="Summary statistics on cells per metacell."
-    )
+    umis_per_metacell = serializers.SerializerMethodField(help_text="Summary statistics on UMIs per metacell.")
+    cells_per_metacell = serializers.SerializerMethodField(help_text="Summary statistics on cells per metacell.")
 
-    qc_metrics = DatasetQualityControlSerializer(
-        source="qc.all", many=True, help_text="Quality control metrics."
-    )
+    qc_metrics = DatasetQualityControlSerializer(source="qc.all", many=True, help_text="Quality control metrics.")
 
     class Meta:
         """Meta configuration."""
@@ -245,10 +242,13 @@ class StatsSerializer(serializers.ModelSerializer):
 class GeneSerializer(serializers.ModelSerializer):
     """Gene serializer."""
 
-    species = serializers.CharField(required=False)
-    genelists = serializers.StringRelatedField(many=True)
-    domains = serializers.StringRelatedField(many=True)
-    orthogroup = serializers.CharField()
+    gene = serializers.CharField(source="name", help_text="Gene name.")
+    species = serializers.CharField(required=False, help_text="Species.")
+    genelists = serializers.StringRelatedField(many=True, help_text="Gene lists.")
+    domains = serializers.StringRelatedField(many=True, help_text="Protein domains.")
+    orthogroups = serializers.SlugRelatedField(
+        many=True, read_only=True, slug_field="name", help_text="Gene orthogroups."
+    )
 
     class Meta:
         """Meta configuration."""
@@ -256,11 +256,11 @@ class GeneSerializer(serializers.ModelSerializer):
         model = models.Gene
         fields = [
             "species",
-            "name",
+            "gene",
             "description",
             "domains",
             "genelists",
-            "orthogroup",
+            "orthogroups",
         ]
 
     def __init__(self, *args, **kwargs):
@@ -274,6 +274,17 @@ class GeneSerializer(serializers.ModelSerializer):
                 self.fields.pop("species")
 
         super().__init__(*args, **kwargs)
+
+
+class GeneNoSpeciesSerializer(GeneSerializer):
+    """Gene serializer without returning species."""
+
+    species = None
+
+    class Meta(GeneSerializer.Meta):
+        """Meta configuration."""
+
+        fields = [f for f in GeneSerializer.Meta.fields if f != "species"]
 
 
 class DomainSerializer(serializers.ModelSerializer):
@@ -307,6 +318,113 @@ class GeneListSerializer(serializers.ModelSerializer):
 
         model = models.GeneList
         fields = ["name", "description", "gene_count"]
+
+
+class GeneModuleSerializer(serializers.ModelSerializer):
+    """Gene module serializer."""
+
+    dataset = serializers.CharField(source="dataset.slug", help_text="Dataset slug.")
+    module = serializers.CharField(source="name", help_text="Gene module name.")
+    gene_count = serializers.IntegerField(source="genes.count", help_text="Number of genes in gene module.")
+    gene_hubs = serializers.SerializerMethodField(help_text="Top 5 genes ordered by membership score.")
+    top_tf = serializers.SerializerMethodField(help_text="Top 5 transcription factors ordered by membership score.")
+
+    def _get_gene_names(self, genes) -> list[str]:
+        return [each.gene.name for each in genes]
+
+    def get_gene_hubs(self, obj) -> list[str]:
+        return self._get_gene_names(obj.get_gene_hubs())
+
+    def get_top_tf(self, obj) -> list[str]:
+        return self._get_gene_names(obj.get_top_transcription_factors())
+
+    class Meta:
+        """Meta configuration."""
+
+        model = models.GeneModule
+        fields = ["dataset", "module", "gene_count", "top_tf", "gene_hubs"]
+
+
+class GeneModuleMembershipSerializer(serializers.ModelSerializer):
+    """Gene module membership serializer."""
+
+    gene = serializers.CharField(help_text="Gene name.")
+    module = serializers.CharField(help_text="Gene module name.")
+    dataset = serializers.CharField(source="module.dataset.slug", help_text="Dataset slug.")
+    score = serializers.CharField(
+        source="membership_score",
+        help_text=("Module membership score. Measures gene-module association: 0 → weak, 1 → strong."),
+    )
+
+    class Meta:
+        """Meta configuration."""
+
+        model = models.GeneModuleMembership
+        fields = ["dataset", "module", "gene", "score"]
+
+
+class GeneModuleSimilaritySerializer(serializers.Serializer):
+    """Gene module similarity serializer."""
+
+    dataset = serializers.CharField(help_text="Reference dataset slug.")
+    module = serializers.CharField(help_text="Reference gene module name.")
+    dataset2 = serializers.CharField(help_text="Comparison dataset slug.")
+    module2 = serializers.CharField(help_text="Comparison gene module name.")
+
+    similarity = serializers.FloatField(help_text="Jaccard similarity index ( shared / union ).")
+
+    shared_genes_module = serializers.IntegerField(help_text="Number of shared genes in reference gene module.")
+    shared_genes_module2 = serializers.IntegerField(help_text="Number of shared genes in comparison gene module.")
+    unique_genes_module = serializers.IntegerField(help_text="Number of unique genes in reference gene module.")
+    unique_genes_module2 = serializers.IntegerField(help_text="Number of unique genes in comparison gene module.")
+
+
+class GeneModuleSimilarityGeneSerializer(GeneSerializer):
+    """Gene module similarity genes serializer."""
+
+    dataset = serializers.CharField(help_text="Dataset slug.")
+    module = serializers.CharField(help_text="Gene module name.")
+    overlap = serializers.CharField(help_text="Category of overlap: unique to one module or shared between both.")
+
+    class Meta:
+        """Meta configuration."""
+
+        model = models.Gene
+        fields = [
+            "overlap",
+            "dataset",
+            "module",
+            "gene",
+            "description",
+            "domains",
+            "genelists",
+            "orthogroups",
+        ]
+
+
+class GeneModuleEigengeneSerializer(serializers.ModelSerializer):
+    """Gene module eigengene serializer."""
+
+    metacell_name = serializers.CharField(source="metacell.name", default=None, help_text="Metacell name.")
+    metacell_type = serializers.CharField(source="metacell.type.name", default=None, help_text="Metacell type.")
+    metacell_color = serializers.CharField(source="metacell.type.color", default=None, help_text="Metacell color.")
+
+    module = serializers.CharField(help_text="Gene module name.")
+    dataset = serializers.CharField(source="module.dataset.slug", help_text="Dataset slug.")
+    eigengene_value = serializers.CharField(help_text="Eigengene value.")
+
+    class Meta:
+        """Meta configuration."""
+
+        model = models.GeneModuleEigengene
+        fields = [
+            "dataset",
+            "module",
+            "metacell_name",
+            "metacell_type",
+            "metacell_color",
+            "eigengene_value",
+        ]
 
 
 class BaseExpressionSerializer(serializers.ModelSerializer):
@@ -364,28 +482,20 @@ class SingleCellSerializer(BaseExpressionSerializer):
         """Meta configuration."""
 
         model = models.SingleCell
-        fields = [
-            "name",
-            "x",
-            "y",
-            "metacell_name",
-            "metacell_type",
-            "metacell_color",
-            "gene_name",
-            "umifrac",
-            "umi_raw",
-        ]
+        fields = ["name", "x", "y", "metacell_name", "metacell_type", "metacell_color", "gene_name", "umifrac"]
+
+    def get_umifrac(self, obj):
+        """Return UMI fraction."""
+        cell_name = obj.name
+        expression_dictionary = self.context["expression_dictionary"]
+        return expression_dictionary.get(cell_name, None)
 
 
 class MetacellSerializer(BaseExpressionSerializer):
     """Metacell serializer."""
 
-    type = serializers.CharField(
-        source="type.name", help_text="Metacell type.", required=False
-    )
-    color = serializers.CharField(
-        source="type.color", help_text="Color of metacell type.", required=False
-    )
+    type = serializers.CharField(source="type.name", help_text="Metacell type.", required=False)
+    color = serializers.CharField(source="type.color", help_text="Color of metacell type.", required=False)
 
     # Show expression for a given gene
     fold_change = serializers.SerializerMethodField(required=False)
@@ -451,11 +561,11 @@ class MetacellCountSerializer(serializers.ModelSerializer):
 class SingleCellGeneExpressionSerializer(serializers.ModelSerializer):
     """Serializer for gene expression per single cell."""
 
-    gene_name = serializers.CharField(source="gene.name")
-    gene_description = serializers.CharField(source="gene.description")
-    gene_domains = serializers.StringRelatedField(source="gene.domains", many=True)
-
-    single_cell_name = serializers.CharField(source="single_cell.name")
+    gene = serializers.CharField(help_text="Gene name.")
+    single_cell = serializers.CharField(help_text="Cell name.")
+    umifrac = serializers.DecimalField(
+        help_text="Gene expression value (UMI fraction).", max_digits=8, decimal_places=3
+    )
 
     class Meta:
         """Meta configuration."""
@@ -465,7 +575,7 @@ class SingleCellGeneExpressionSerializer(serializers.ModelSerializer):
 
 
 class MetacellGeneExpressionSerializer(serializers.ModelSerializer):
-    """Serializer for gene expression per metacell."""
+    """Serializer for gene expression for each metacell."""
 
     log2_fold_change = serializers.FloatField(required=False)
 
@@ -485,7 +595,7 @@ class MetacellGeneExpressionSerializer(serializers.ModelSerializer):
 
 
 class DatasetMetacellGeneExpressionSerializer(MetacellGeneExpressionSerializer):
-    """Serializer for gene expression per metacell (returned per dataset)."""
+    """Serializer for gene expression for each metacell (returned per dataset)."""
 
     dataset = serializers.CharField(source="dataset.slug")
 
@@ -503,7 +613,7 @@ class DatasetMetacellGeneExpressionSerializer(MetacellGeneExpressionSerializer):
 class CorrelatedGenesSerializer(serializers.ModelSerializer):
     """Serializer for correlated genes."""
 
-    name = serializers.SerializerMethodField()
+    gene = serializers.SerializerMethodField()
     description = serializers.SerializerMethodField()
     domains = serializers.SerializerMethodField()
     spearman = serializers.FloatField()
@@ -513,7 +623,7 @@ class CorrelatedGenesSerializer(serializers.ModelSerializer):
         """Meta configuration."""
 
         model = models.GeneCorrelation
-        exclude = ["dataset", "id", "gene", "gene2"]
+        exclude = ["dataset", "id", "gene2"]
 
     def get_non_selected_gene(self, obj):
         """Return non-selected gene."""
@@ -522,7 +632,7 @@ class CorrelatedGenesSerializer(serializers.ModelSerializer):
         # Return the gene that was not selected in the input
         return obj.gene2 if obj.gene.name == selected else obj.gene
 
-    def get_name(self, obj) -> str:
+    def get_gene(self, obj) -> str:
         """Return gene name from non-selected gene."""
 
         gene = self.get_non_selected_gene(obj)
@@ -571,9 +681,7 @@ class OrthologSerializer(serializers.ModelSerializer):
     gene_domains = serializers.StringRelatedField(source="gene.domains", many=True)
     gene_slug = serializers.CharField(source="gene.slug")
 
-    expression = DatasetMetacellGeneExpressionSerializer(
-        source="gene.mge", many=True, required=False
-    )
+    expression = DatasetMetacellGeneExpressionSerializer(source="gene.mge", many=True, required=False)
 
     class Meta:
         """Meta configuration."""
@@ -584,9 +692,7 @@ class OrthologSerializer(serializers.ModelSerializer):
     def __init__(self, *args, **kwargs):
         """Object initializer."""
 
-        show_expression = (
-            kwargs["context"]["request"].GET.get("expression", "false") == "true"
-        )
+        show_expression = kwargs["context"]["request"].GET.get("expression", "false") == "true"
         if not show_expression:
             self.fields.pop("expression")
         super().__init__(*args, **kwargs)
@@ -608,9 +714,7 @@ class OrthologSerializer(serializers.ModelSerializer):
                 dataset_expr.setdefault(dataset, []).append(item)
 
             # Add dataset information
-            data["datasets"] = DatasetSerializer(
-                list(dataset_dict.values()), many=True
-            ).data
+            data["datasets"] = DatasetSerializer(list(dataset_dict.values()), many=True).data
 
             # Sort datasets by their order
             data["datasets"].sort(key=lambda x: x["order"])
@@ -689,15 +793,34 @@ class SAMapSerializer(serializers.ModelSerializer):
         return self._get_metacell_types(obj)[1].color
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Single query",
+            value={
+                "sequences": "MSIWFSIAILSVLVPFVQLTPIRPRS",
+                "type": "aminoacids",
+                "species": "Trichoplax adhaerens",
+            },
+        ),
+        OpenApiExample(
+            "Multiple queries",
+            value={
+                "sequences": (
+                    ">Query_1\\nMSLIRNYNYHLRSASLANASQLDT\\n>Query_2\\nMDSSTDIPCNCVEILTA\\n>Query_3\\nMDSLTDRPCNYVEILTA"
+                ),
+                "type": "aminoacids",
+                "species": "Trichoplax adhaerens",
+            },
+        ),
+    ]
+)
 class AlignRequestSerializer(serializers.Serializer):
     """Serializer for sequence alignment request."""
 
     sequences = serializers.CharField(
         required=True,
-        help_text=(
-            "The FASTA sequences to query "
-            f"(maximum of {settings.MAX_ALIGNMENT_SEQS} sequences)."
-        ),
+        help_text=(f"The FASTA sequences to query (maximum of {settings.MAX_ALIGNMENT_SEQS} sequences)."),
     )
     type = serializers.ChoiceField(
         choices=("aminoacids", "nucleotides"),
@@ -707,17 +830,8 @@ class AlignRequestSerializer(serializers.Serializer):
             "for proteins (default) or <kbd>nucleotides</kbd> for DNA/RNA."
         ),
     )
-    species = serializers.ChoiceField(
-        choices=(
-            [
-                (s.scientific_name, s.common_name)
-                for s in models.Species.objects.filter(files__type="DIAMOND")
-            ]
-            if check_model_exists(models.Species)
-            else []
-        ),
-        required=True,
-        help_text="The [species' scientific name](#/operations/species_list).",
+    species = serializers.CharField(
+        required=True, help_text="The [species' scientific name](#/operations/species_list)."
     )
 
 
@@ -726,25 +840,157 @@ class AlignResponseSerializer(serializers.Serializer):
 
     query = serializers.CharField(help_text="ID of the query sequence.")
     target = serializers.CharField(help_text="ID of the hit sequence.")
-    identity = serializers.FloatField(
-        help_text="Percentage of identity between query and hit sequences."
-    )
+    identity = serializers.FloatField(help_text="Percentage of identity between query and hit sequences.")
     length = serializers.IntegerField(help_text="Length of the alignment.")
-    mismatch = serializers.IntegerField(
-        help_text="Number of mismatches in the alignment."
-    )
+    mismatch = serializers.IntegerField(help_text="Number of mismatches in the alignment.")
     gaps = serializers.IntegerField(help_text="Number of gaps in the alignment.")
-    query_start = serializers.IntegerField(
-        help_text="Start position of the query sequence in the alignment."
-    )
-    query_end = serializers.IntegerField(
-        help_text="End position of the query sequence in the alignment."
-    )
-    target_start = serializers.IntegerField(
-        help_text="Start position of the hit sequence in the alignment."
-    )
-    target_end = serializers.IntegerField(
-        help_text="End position of the hit sequence in the alignment."
-    )
+    query_start = serializers.IntegerField(help_text="Start position of the query sequence in the alignment.")
+    query_end = serializers.IntegerField(help_text="End position of the query sequence in the alignment.")
+    target_start = serializers.IntegerField(help_text="Start position of the hit sequence in the alignment.")
+    target_end = serializers.IntegerField(help_text="End position of the hit sequence in the alignment.")
     e_value = serializers.FloatField(help_text="Statistical significance.")
     bit_score = serializers.FloatField(help_text="Alignment quality.")
+
+
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Example",
+            value={
+                "dataset": "amphimedon-queenslandica-adult",
+                "qvalue": 0.05,
+                "genes": ["Aque_Aqu2.1.19027_001", "Aque_Aqu2.1.23371_001", "Aque_Aqu2.1.23228_001"],
+            },
+        ),
+    ]
+)
+class EnrichmentAnalysisRequestSerializer(serializers.Serializer):
+    """Filter set for enrichment analysis."""
+
+    dataset = serializers.CharField(help_text="The [dataset's slug](#/operations/datasets_list).")
+    qvalue = serializers.FloatField(help_text="Adjusted p-value threshold. `0.05` by default.", required=False)
+    obsolete = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="If true, obsolete terms will be included in the analysis.",
+    )
+
+    # Available gene input options
+    genes = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Array of genes to use as query genes. "
+            "These genes are combined with genes from `gene_modules` and `gene_lists`."
+        ),
+    )
+    gene_modules = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Array of [gene modules](#/operations/modules_list) to use as query genes. "
+            "Genes from the selected modules are combined with genes from `genes` and `gene_lists`."
+        ),
+    )
+    gene_lists = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Array of [preset gene lists](#/operations/gene_lists_list) to use as query genes. "
+            "Genes from the selected lists are combined with genes from `genes` and `gene_modules`."
+        ),
+    )
+
+    def validate(self, attrs):
+        # Validate if defining at least one of: genes, gene_modules or gene_lists
+        genes = attrs.get("genes")
+        gene_modules = attrs.get("gene_modules")
+        gene_lists = attrs.get("gene_lists")
+
+        if not any([genes, gene_modules, gene_lists]):
+            raise serializers.ValidationError(
+                "At least one of 'genes', 'gene_modules', or 'gene_lists' must be provided."
+            )
+
+        return attrs
+
+
+class EnrichmentAnalysisResponseSerializer(serializers.Serializer):
+    """Serializer for GO enrichment analysis response."""
+
+    namespace = serializers.CharField(
+        help_text="`BP` for biological process, `MF` for molecular function, `CC` for cellular component.", source="NS"
+    )
+    term = serializers.CharField(help_text="Term ID.", source="GO")
+    name = serializers.CharField(help_text="Term name.")
+    enrichment = serializers.CharField(
+        help_text=(
+            "Term enrichment: enriched (significantly higher compared to background genes) "
+            "or purified (significantly lower)."
+        )
+    )
+
+    depth = serializers.IntegerField(
+        help_text="Hierarchy depth: higher for more specific terms.", source="goterm.depth"
+    )
+    is_obsolete = serializers.BooleanField(
+        source="goterm.is_obsolete",
+        required=False,
+        help_text=(
+            "Whether the term is obsolete."
+            "Obsolete terms are excluded from the analysis by default unless `obsolete = true`."
+        ),
+    )
+
+    pvalue = serializers.FloatField(help_text="Statistical significance (uncorrected).", source="p_uncorrected")
+    qvalue = serializers.FloatField(help_text="Statistical significance (Bonferroni).", source="get_pvalue")
+
+    query_hit_count = serializers.SerializerMethodField(help_text="Number of input genes associated with the term.")
+    query_count = serializers.SerializerMethodField(help_text="Number of input genes.")
+    background_hit_count = serializers.SerializerMethodField(
+        help_text="Number of background genes associated with the term."
+    )
+    background_count = serializers.SerializerMethodField(help_text="Number of background genes.")
+
+    genes = serializers.ListField(
+        child=serializers.CharField(), help_text="Input genes associated with the term.", source="study_items"
+    )
+
+    similarity_coords = serializers.ListField(
+        child=serializers.FloatField(),
+        help_text=(
+            "GO term semantic similarity coordinates. "
+            "Computed from a distance matrix of pairwise GO term similarities. "
+            "The matrix is transformed using MDS (Multi-Dimensional Scaling)."
+        ),
+        source="semantic_sim_coords",
+    )
+
+    def _get_ratio(self, obj):
+        if not hasattr(obj, "_ratio"):
+            obj._ratio = {
+                "study": obj.ratio_in_study,
+                "pop": obj.ratio_in_pop,
+            }
+        return obj._ratio
+
+    def get_query_hit_count(self, obj) -> int:
+        return self._get_ratio(obj)["study"][0]
+
+    def get_query_count(self, obj) -> int:
+        return self._get_ratio(obj)["study"][1]
+
+    def get_background_hit_count(self, obj) -> int:
+        return self._get_ratio(obj)["pop"][0]
+
+    def get_background_count(self, obj) -> int:
+        return self._get_ratio(obj)["pop"][1]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+
+        # Avoid showing obsolete if not loading obsolete terms
+        if not self.context.get("obsolete"):
+            data.pop("is_obsolete", None)
+
+        return data
