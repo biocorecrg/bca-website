@@ -619,7 +619,10 @@ class MetacellMarkerViewSet(BaseReadOnlyModelViewSet):
         except (TypeError, ValueError):
             raise ValidationError({"fc_min": "Must be a number."})
 
-        dataset = parse_species_dataset(dataset_slug)
+        try:
+            dataset = parse_species_dataset(dataset_slug)
+        except ValueError as exc:
+            raise ValidationError({"dataset": str(exc)})
         names = [n.strip() for n in metacells.split(",") if n.strip()]
 
         sql = self._MARKER_SQL.format(having_col=having_col)
