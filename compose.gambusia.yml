@@ -1,6 +1,6 @@
 services:
     nginx:
-        image: nginx:1.29
+        image: dhi.io/nginx:1.29.7-debian13-dev
         ports:
             - "${WEB_PORT:-8080}:80"
         volumes:
@@ -9,10 +9,12 @@ services:
             - static_files:/static
             - ./data:/data
         depends_on:
-            # - ghost
             - web
+        profiles: ["nginx"]
     web:
-        build: .
+        build:
+            context: .
+            target: dev
         # user: "${DOCKER_WEB_USER:-bca}"
         restart: always
         env_file: [.env]
@@ -26,9 +28,11 @@ services:
             # Media and static files
             - static_files:/usr/src/app/static
             - ./data:/usr/src/app/data
-        depends_on:
-            db:
-                condition: service_healthy
+            # Postgres files
+            - ./.pgpass:/postgres/.pgpass:ro
+            - ./.pg_service.conf:/postgres/.pg_service.conf:ro
+        environment:
+            - PGPASSFILE=/postgres/.pgpass
+            - PGSERVICEFILE=/postgres/.pg_service.conf
 volumes:
     static_files:
-    # ghost_data:
