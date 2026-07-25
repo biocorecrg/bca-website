@@ -545,18 +545,26 @@ class MetacellMarkerViewSet(BaseReadOnlyModelViewSet):
               AND (mc.name = ANY(%(names)s) OR mct.name = ANY(%(names)s))
         ),
         stats AS (
+            -- Foreground/background membership is expressed as ``IN (subquery)``
+            -- rather than a join to ``fg_metacells``: PostgreSQL evaluates it as a
+            -- hashed SubPlan (built once, probed per row), whereas a join is prone
+            -- to a nested loop over every expression row when the foreground set is
+            -- small, which is catastrophic on large datasets (millions of rows).
             SELECT
                 e.gene_id,
-                sum(e.umi_raw)     FILTER (WHERE fg.metacell_id IS NOT NULL) AS fg_sum_umi,
-                sum(e.umi_raw)     FILTER (WHERE fg.metacell_id IS NULL)     AS bg_sum_umi,
-                avg(e.fold_change) FILTER (WHERE fg.metacell_id IS NOT NULL) AS fg_mean_fc,
-                avg(e.fold_change) FILTER (WHERE fg.metacell_id IS NULL)     AS bg_mean_fc,
+                sum(e.umi_raw)
+                    FILTER (WHERE e.metacell_id IN (SELECT metacell_id FROM fg_metacells)) AS fg_sum_umi,
+                sum(e.umi_raw)
+                    FILTER (WHERE e.metacell_id NOT IN (SELECT metacell_id FROM fg_metacells)) AS bg_sum_umi,
+                avg(e.fold_change)
+                    FILTER (WHERE e.metacell_id IN (SELECT metacell_id FROM fg_metacells)) AS fg_mean_fc,
+                avg(e.fold_change)
+                    FILTER (WHERE e.metacell_id NOT IN (SELECT metacell_id FROM fg_metacells)) AS bg_mean_fc,
                 percentile_cont(0.5) WITHIN GROUP (ORDER BY e.fold_change)
-                    FILTER (WHERE fg.metacell_id IS NOT NULL) AS fg_median_fc,
+                    FILTER (WHERE e.metacell_id IN (SELECT metacell_id FROM fg_metacells)) AS fg_median_fc,
                 percentile_cont(0.5) WITHIN GROUP (ORDER BY e.fold_change)
-                    FILTER (WHERE fg.metacell_id IS NULL)     AS bg_median_fc
+                    FILTER (WHERE e.metacell_id NOT IN (SELECT metacell_id FROM fg_metacells)) AS bg_median_fc
             FROM app_metacellgeneexpression e
-            LEFT JOIN fg_metacells fg ON fg.metacell_id = e.metacell_id
             WHERE e.dataset_id = %(dataset_id)s
             GROUP BY e.gene_id
         )
