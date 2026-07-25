@@ -1,0 +1,72 @@
+# Local pre-commit hooks, intended to be run with `prek` (https://github.com/j178/prek).
+#
+# This mirrors the Python- and formatting-centric subset of the CI Super-Linter
+# (see .github/linters/ and .github/workflows/linter.yml). It is a fast local
+# pre-flight, NOT a replacement: CI Super-Linter remains the source of truth.
+#
+#   Install the git hook:  prek install
+#   Run on all files:      prek run --all-files
+#   Update pinned revs:    prek autoupdate
+#
+# Intentionally NOT mirrored here (left to CI Super-Linter): ESLint, Stylelint,
+# gitleaks, checkov, jscpd, markdownlint, textlint, sqlfluff, zizmor. These need
+# the repo's Node plugin set (ESLint/Stylelint are not in package.json) or
+# non-Python runtimes, and do not map cleanly to local hooks.
+
+# Skip vendored / generated / data paths (most are gitignored anyway).
+exclude: '^(node_modules/|app/static/app/dist/|rest/static/rest/dist/|static/|data/)'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: check-merge-conflict # ~ Super-Linter GIT_MERGE_CONFLICT_MARKERS
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+
+  # Python format + lint (120-char line length, per .editorconfig). Migrations
+  # and __init__.py are excluded to mirror Super-Linter's FILTER_REGEX_EXCLUDE.
+  #
+  # ruff-format matches Super-Linter's PYTHON_RUFF_FORMAT exactly. For linting,
+  # Super-Linter uses a narrower ruff rule selection than bare ruff's built-in
+  # defaults (which would flag I/B/C4/SIM/... and churn code CI accepts), so we
+  # scope ruff-check to E/F (pyflakes + pycodestyle errors) as a safe, non-
+  # churning subset and report only. The full ruff lint runs in CI.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0
+    hooks:
+      - id: ruff-format # ~ PYTHON_RUFF_FORMAT
+        args: [--line-length=120]
+        exclude: '(^|/)migrations/|(^|/)__init__\.py'
+      - id: ruff-check # subset of PYTHON_RUFF (E/F only)
+        args: ['--select=E,F', '--line-length=120']
+        exclude: '(^|/)migrations/|(^|/)__init__\.py'
+
+  # Django templates (uses .djlintrc).
+  - repo: https://github.com/Riverside-Healthcare/djLint
+    rev: v1.42.3
+    hooks:
+      - id: djlint-django
+
+  # Spelling. Mirrors the skip list from .github/linters/.codespellrc.
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell # ~ SPELL_CODESPELL
+        args: ['--skip=*/package-lock.json,*/go.mod,*/go.sum,*.log,.git,*.svg,*.lock']
+
+  - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+    rev: 3.6.1
+    hooks:
+      - id: editorconfig-checker # ~ Super-Linter EDITORCONFIG
+
+  # Prettier for CSS and TypeScript (respects .prettierignore).
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.9.6
+    hooks:
+      - id: prettier # ~ CSS_PRETTIER + TYPESCRIPT_PRETTIER
+        types_or: [css, ts]
