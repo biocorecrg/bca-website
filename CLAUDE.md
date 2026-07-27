@@ -57,18 +57,42 @@ prek autoupdate                             # bump pinned hook revisions
 
 Note: `README.md` shows `python manage.py test`, but the configured/CI test runner is **pytest**. Prefer pytest.
 
+### After any code modification: run tests and coverage
+
+Any task that modifies code (Python, TypeScript, templates) is **not complete until the test suite and coverage have been run**. Delegate this to the `test-coverage` subagent (`.claude/agents/test-coverage.md`) rather than running it inline — it keeps the raw pytest/coverage output out of the main context and returns only pass/fail, failing test details, and coverage of the changed files.
+
+```
+Agent(subagent_type: "test-coverage", prompt: "<what changed and which files>")
+```
+
+The subagent runs, in the `web` container: `pytest -q`, `bun test` (only when `app/static/app/src/**` changed, after `bun run build`), then `coverage run -m pytest -q` + `coverage report`. It deliberately skips the Playwright suite (`pytest e2e/`) unless asked, since that needs the synthetic DB from `manage.py createtestdb`.
+
+Report the outcome honestly: if the suite is red or coverage dropped on the changed files, say so with the failure output — do not report a modification task as done on a red suite.
+
+The lint pre-flight is the companion step: delegate it to the `prek-lint` subagent (see [Pre-commit hooks](#pre-commit-hooks-prek) below). The two are independent — run them in parallel in a single message.
+
 ### Pre-commit hooks (prek)
 
 `.pre-commit-config.yaml` provides a fast local pre-flight that mirrors the Python/formatting subset of the CI Super-Linter (ruff-format, a conservative `ruff-check --select=E,F`, djlint, codespell, editorconfig-checker, prettier for CSS/TS, plus basic hygiene incl. merge-conflict markers). It is meant to be run with [`prek`](https://github.com/j178/prek), a drop-in `pre-commit` replacement; `pre-commit` also works. Run `prek install` to enable it on every commit.
+
+Delegate prek runs to the `prek-lint` subagent (`.claude/agents/prek-lint.md`) rather than running the hooks inline — it keeps the hook output out of the main context and returns which hooks auto-fixed which files, plus the remaining report-only violations with `file:line`.
+
+```
+Agent(subagent_type: "prek-lint", prompt: "<what changed and which files>")
+```
+
+Note for whoever runs this: unlike pytest, `prek` runs on the **host**, not in the `web` container. The fixing hooks (`trailing-whitespace`, `end-of-file-fixer`, `mixed-line-ending`, `ruff-format`, `prettier`) exit non-zero on the run in which they rewrite a file, so a second clean pass is what confirms success. The subagent never silences a hook with `# noqa` or a config edit to force a pass; it reports judgment calls back instead.
 
 This is a local convenience, **not** a replacement for CI — Super-Linter remains the source of truth and runs the full ruff ruleset plus ESLint, Stylelint, gitleaks, checkov, jscpd, etc. (deliberately not mirrored locally, since they need the repo's Node plugin set — ESLint/Stylelint are not in `package.json` — or non-Python runtimes). `ruff-check` is scoped to `E,F` because bare ruff's defaults flag rules (import sorting, bugbear, simplify) that Super-Linter does not enforce, which would churn otherwise-accepted code. This config lives on the `local-meta` branch only.
 
 ### Local-only files (kept off upstream)
 
-`compose.gambusia.yml`, `.pre-commit-config.yaml`, and `CLAUDE.md` are local conveniences that live on the `local`/`local-meta` branches (pushed only to the `origin` = biocorecrg fork) and must **never** reach the `upstream` (biodiversitycellatlas) repo. `.gitignore` can't express this — it is itself committed and pushed, and cannot ignore files already tracked on `local-meta`. Two untracked, per-clone guards enforce it instead (both stored in the shared git dir, so they are never committed and never pushed):
+`compose.gambusia.yml`, `.pre-commit-config.yaml`, `CLAUDE.md`, and the whole **`.claude/` directory** are local conveniences that must **never** reach the `upstream` (biodiversitycellatlas) repo. `.gitignore` can't express this — it is itself committed and pushed, and cannot ignore files already tracked on `local-meta`. Two untracked, per-clone guards enforce it instead (both stored in the shared git dir, so they are never committed and never pushed):
 
-- **`.git/info/exclude`** lists the three files, so `git add` won't stage them on any branch/worktree where they aren't already tracked (i.e. every upstream-destined branch). No effect on `local`/`local-meta`, where they're intentionally tracked.
-- **`.git/hooks/pre-push`** aborts a push whose ref tree contains any of the three files, but only when the target remote matches `biodiversitycellatlas`/`upstream`. Pushes to `origin` and clean upstream branches (e.g. `main`) pass.
+- **`.git/info/exclude`** lists them, so `git add` won't stage them on any branch/worktree where they aren't already tracked (i.e. every upstream-destined branch). No effect on `local`/`local-meta`, where the first three are intentionally tracked.
+- **`.git/hooks/pre-push`** aborts a push whose ref tree contains any of them, but only when the target remote matches `biodiversitycellatlas`/`upstream`. Pushes to `origin` and clean upstream branches (e.g. `main`) pass.
+
+The first three are *tracked* on the `local`/`local-meta` branches and pushed only to `origin` (the biocorecrg fork). **`.claude/` is different: it is tracked nowhere, on no branch, not even `local-meta`.** It holds this clone's agent definitions (`.claude/agents/*.md`) and `settings.local.json`, which are personal tooling config, not project content. It happens to be covered by a global gitignore (`~/.gitignore_global`) on this machine, but that is user-specific and absent on a fresh clone or another developer's machine — so the per-clone guards above list it explicitly and are the thing to rely on. Never `git add -f` anything under `.claude/`, on any branch. The cost is that the subagents referenced in this file do not exist in a fresh clone and must be recreated there, alongside the guards themselves.
 
 Caveats: these guards exist only in this clone — recreate them on a fresh clone (they can't be committed by design); `git push --no-verify` bypasses the hook (the `info/exclude` layer still holds); and because this is a git worktree, the sibling `local` worktree shares the same exclude + hook (harmless, since those files are legitimately tracked there).
 
