@@ -1,0 +1,219 @@
+CTE-based markers query vs the original ORM pipeline
+====================================================
+
+Date:       2026-07-29
+Endpoint:   /api/v1/metacellmarkers
+Branch:     local-meta (rest/views.py at 3d5f221, byte-identical on
+            app_metacellgeneexpression at d7150d9)
+Script:     benchmarks/scripts/bench_marker_orm_vs_cte.py (untracked)
+Host:       local bca-web-1 container, PostgreSQL 18.3
+
+
+How to run
+----------
+
+    docker exec -i bca-web-1 python manage.py shell < benchmarks/scripts/bench_marker_orm_vs_cte.py
+
+    # parity table only (skips the multi-minute timing sweep)
+    docker exec -i -e PARITY_ONLY=1 bca-web-1 python manage.py shell \
+        < benchmarks/scripts/bench_marker_orm_vs_cte.py
+
+Full sweep takes 5m35s. Read-only: SELECTs only, inside transactions that are
+rolled back, with a 300s statement timeout per run.
+
+
+Method
+------
+
+Neither implementation is reconstructed by the harness.
+
+  CTE  the raw SQL in rest.views.MetacellMarkerViewSet._MARKER_SQL, driven
+       through the real viewset get_queryset(), so parameter parsing and the
+       fc_min_type -> having_col mapping are exercised as in production.
+
+  ORM  the django-filter annotation pipeline it replaced, which still lives in
+       rest.filters.MetacellMarkerFilter. The filterset is driven with a plain
+       params dict, so the queryset is built by the shipped code.
+
+Each scenario runs both sides twice, alternating which goes first (CTE then ORM,
+then ORM then CTE) and reports the minimum, so buffer-cache warming does not
+systematically favour either side. EXPLAIN ANALYZE gives the server-side time
+separately from Python object instantiation. prefetch_related("domains",
+"genelists") is excluded from both sides, being identical work in each.
+
+
+Results: 16 scenarios
+---------------------
+
+wall = time to materialise the whole result set (what the endpoint does before
+paginating). exec = server-side EXPLAIN ANALYZE execution time, in ms.
+
+  #    scenario                                    table rows   out   CTE wall   ORM wall   speedup   CTE exec   ORM exec
+  ---  ------------------------------------------  ----------  -----  ---------  ---------  --------  ---------  ---------
+  S01  amphimedon-larva, 3 mcs, mean                   300001      2      0.08s      0.38s     4.81x         73        395
+  S02  amphimedon-larva, 3 mcs, median                 300001      1      0.07s      0.39s     5.31x         76        412
+  S03  amphimedon-larva, cell type, mean               300001      1      0.08s      0.31s     4.00x         73        306
+  S04  trichoplax, 3 mcs, mean                         507240    133      0.13s      0.59s     4.64x        122        611
+  S05  xenia, 5 mcs, median                           5051000    211      1.22s      5.17s     4.22x       1219       5871
+  S06  mus-musculus, 1 mc, mean                       9922631    224      2.14s      4.87s     2.28x       2264       5764
+  S07  mus-musculus, 1 mc, median                     9922631    224      2.14s      5.14s     2.41x       2257       6239
+  S08  mus-musculus, 20 mcs, mean                     9922631    185      2.12s      6.53s     3.07x       2232       7985
+  S09  mus-musculus, 20 mcs, median                   9922631    169      2.11s      6.56s     3.11x       2301       8212
+  S10  mus-musculus, cell type (94 mcs), mean         9922631    235      2.24s      5.01s     2.23x       2386       5986
+  S11  mus-musculus, 2 cell types (137 mcs), median   9922631     74      2.21s      7.31s     3.31x       2357       8612
+  S12  mus-musculus, cell type + 3 mcs mixed, mean    9922631    152      2.18s      9.10s     4.18x       2323      10531
+  S13  mus-musculus, 20 mcs, fc_min=0                 9922631  15150      2.30s      6.85s     2.98x       2285       8083
+  S14  mus-musculus, 20 mcs, fc_min=-9, median        9922631  15150      2.28s      7.11s     3.12x       2254       8076
+  S15  mus-musculus, empty foreground                 9922631      0      1.87s      4.81s     2.57x       2117       6003
+  S16  schmidtea, 200 mcs, mean                       9349472     84      2.32s      6.43s     2.77x       2454       7460
+
+Wall speedup:        min 2.23x, median 3.11x, max 5.31x
+Server-side speedup: min 2.51x, median 3.58x, max 5.44x
+
+The CTE wins every scenario. Re-running the whole sweep reproduced every figure
+within about 0.15s.
+
+Scenario coverage: three dataset sizes (300k / 507k / 5.0M / 9.3M / 9.9M
+expression rows), foreground selected by metacell name, by cell-type name, and
+by a mix of both, foreground sizes from 1 to 200 metacells, both fc_min_type
+paths (mean and median), three fc_min thresholds (2, 0, -9) spanning highly
+selective to effectively unfiltered, an empty foreground, and two different
+large datasets.
+
+
+Correctness: identical
+----------------------
+
+All 16 scenarios return the same gene set (no extra or missing genes on either
+side), and all seven annotation columns match to a relative tolerance of 1e-9 on
+every shared gene:
+
+    bg_sum_umi, fg_sum_umi, umi_perc, fg_mean_fc, bg_mean_fc,
+    fg_median_fc, bg_median_fc
+
+Raw values were spot-printed on S08 to confirm the comparison was not trivially
+passing on nulls: all 185 rows are non-null in both implementations and agree to
+full precision. Example (gene 316608):
+
+    CTE  (444369.0, 43995.0, 9.00864928618817, 2.2083698068506736,
+          1.1418500086932228, 2.1082150979492926, 0.9777542568507837)
+    ORM  (444369.0, 43995.0, 9.00864928618817, 2.2083698068506736,
+          1.1418500086932228, 2.1082150979492926, 0.9777542568507837)
+
+
+Why the ORM is slower
+---------------------
+
+Both plans read the same covering index, app_mge_dataset_gene_covering, with
+Heap Fetches: 0. The difference is entirely per-row join work.
+
+CTE plan (mus-musculus, 20 metacells, mean):
+
+    Sort  (actual rows=185)
+      Sort Method: quicksort  Memory: 39kB
+      CTE stats
+        ->  GroupAggregate  (actual rows=16187)
+              ->  Index Only Scan using app_mge_dataset_gene_covering
+                    (actual rows=9922631)
+                    Heap Fetches: 0
+                    SubPlan 1  (actual rows=20, loops=1)
+
+  One SubPlan, evaluated once: 613 metacells hashed, 20 in the foreground. Then
+  one boolean per row over the index-only scan, a GroupAggregate that consumes
+  the index order directly, and an in-memory quicksort of the ~200 output rows.
+  No disk sort in any of the 16 scenarios.
+
+ORM plan (same parameters):
+
+    GroupAggregate  (actual rows=185)
+      ->  Nested Loop Left Join  (actual rows=9922631)
+            ->  Nested Loop Left Join  (actual rows=9922631)
+                  ->  Merge Join  (actual rows=9922631)
+                        ->  Index Scan on app_gene  (actual rows=338804)
+                        ->  Memoize  (loops=338804)
+                              ->  Index Only Scan on app_species
+                        ->  Index Only Scan using app_mge_dataset_gene_covering
+                              (actual rows=9922631)  Heap Fetches: 0
+                  ->  Memoize  (loops=9922631)
+                        ->  Index Scan on app_metacell
+            ->  Memoize  (loops=9922631)
+                  ->  Index Scan on app_metacelltype
+
+  Zero SubPlans, but three Nested Loop joins whose Memoize inner nodes report
+  loops=9922631, i.e. one lookup per expression row, twice over, to resolve
+  app_metacell.name and app_metacelltype.name for the FILTER predicates.
+  Memoize makes each individual lookup nearly free, but 20M loop iterations
+  cost about 4.7s of the 10.5s. On top of that, basing the query on Gene
+  merge-joins all 338,804 genes across every species and drags in an
+  app_species join forced by Gene.Meta.ordering = ["species", "name"].
+
+The max_memoize_loops field in the script's JSON output tracks this directly: it
+equals the dataset row count in every ORM scenario and is 0 in every CTE
+scenario.
+
+The roughly 2.1s floor on the largest datasets is the full-dataset index-only
+scan itself, which both implementations share. Beating that needs precomputed
+per-(dataset, cell type) results, which is a schema and pipeline decision, not a
+query change.
+
+
+Parameter parity: one real gap
+------------------------------
+
+Row counts only, no timing (dataset trichoplax-adhaerens, metacells 1,2,3,
+fc_min 2, fc_min_type mean unless stated).
+
+  query parameters                            CTE                     ORM
+  ------------------------------------------  ----------------------  ----------------------
+  baseline                                    133                     133
+  fc_max_bg_type=ignore + fc_max_bg=1.2       133                     133
+  fc_max_bg_type=mean + fc_max_bg=1.2         133                     132
+  fc_max_bg_type=median + fc_max_bg=1.2       133                     133
+  fc_min_type omitted                         133                     rejected: fc_min_type
+  fc_min omitted (defaults to 2)              133                     133
+  fc_min_type=bogus                           rejected: fc_min_type   rejected: fc_min_type
+  dataset=bogus                               rejected: dataset       rejected: dataset
+  metacells empty                             rejected: detail        rejected: metacells
+
+Two behaviour changes the rewrite introduced, neither of them covered by the
+timing sweep:
+
+1. fc_max_bg / fc_max_bg_type are silently ignored by the CTE path.
+   _MARKER_SQL has no background threshold and get_queryset() never reads those
+   parameters, so a client passing them gets unfiltered results with no error.
+   The ORM path did apply them (row 3 above: 132 rows instead of 133).
+
+   Mitigating context: the ORM implementation was itself broken.
+   rest/filters.py:871 reads
+
+       fc_max_bg = self.data.get("fc_min", 3)
+
+   so it thresholds on fc_min's value rather than fc_max_bg, which is why
+   passing fc_max_bg=1.2 with median changes nothing. The rewrite therefore
+   dropped a feature that never worked as documented. The parameters are still
+   advertised in the OpenAPI schema, because the viewset keeps
+   filterset_class = filters.MetacellMarkerFilter for parameter docs.
+
+2. fc_min_type became optional, defaulting to "mean". The filterset declared it
+   required=True, so omitting it used to be a 400. Likely an improvement, but it
+   is a contract change.
+
+Everything else agrees, including rejection of a bogus dataset, a bogus
+fc_min_type, and empty metacells. The only difference there is that the CTE path
+reports the empty-metacells error under a "detail" key rather than "metacells".
+
+
+Caveats
+-------
+
+- Single-host measurements against the local bca-web-1 container and its
+  PostgreSQL 18.3. Absolute times will differ elsewhere, but the ratios held
+  across two full sweeps.
+- Timings are the minimum of two runs per side with alternating execution order.
+  They are not a statistical distribution.
+- rest/views.py was not modified to produce this report, so no test run was
+  warranted. The benchmark script passes all prek hooks.
+- Dataset row counts referenced above, from app_metacellgeneexpression:
+  mus-musculus 9,922,631 (613 metacells) / schmidtea-mediterranea 9,349,472
+  (352) / xenia-sp 5,051,000 (250) / trichoplax-adhaerens 507,240 (45) /
+  amphimedon-queenslandica-larva 300,001 (31).
