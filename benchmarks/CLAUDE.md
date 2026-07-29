@@ -4,8 +4,9 @@ Ad-hoc performance and correctness benchmarks for the Data Portal. Written to
 answer a specific question at a specific moment, kept because the numbers are
 worth being able to re-check.
 
-**This whole directory is local-only. It must never be committed to any branch
-or pushed to any remote.** See [Never committed, never pushed](#never-committed-never-pushed)
+**This whole directory is tracked only on the `local` branch and pushed only to
+`origin` (the biocorecrg fork). It must never reach `upstream`
+(biodiversitycellatlas) or `main`.** See [Kept off upstream](#kept-off-upstream)
 below for the two guards that enforce that, and for what to recreate on a fresh
 clone.
 
@@ -104,18 +105,19 @@ All three also document two parameter-parity differences the rewrite
 introduced: `fc_max_bg`/`fc_max_bg_type` are silently ignored, and
 `fc_min_type` became optional.
 
-## Never committed, never pushed
+## Kept off upstream
 
 `.gitignore` cannot express this, because `.gitignore` is itself committed and
-pushed. Two untracked, per-clone guards do it instead. Both live in the shared
-git dir (`/data/remote-work/bio/bca-website/.git`), so they are never committed
-and never pushed:
+pushed, and cannot ignore files already tracked on `local`. Two untracked,
+per-clone guards do it instead. Both live in the shared git dir
+(`/data/remote-work/bio/bca-website/.git`), so they are never committed and
+never pushed — see the parent
+[CLAUDE.md](../CLAUDE.md#local-only-files-kept-off-upstream) for the full
+mechanism shared with the other local-only paths:
 
 1. **`.git/info/exclude`** lists `benchmarks/`, so `git add benchmarks/` is
-   refused on every branch and worktree. That is stricter than the other
-   local-only paths: `.claude/` is listed there too, but it is already tracked on
-   `local-meta`, where an exclude entry has no effect, whereas `benchmarks/` is
-   tracked nowhere and so the entry bites everywhere.
+   refused on every branch/worktree other than `local`, where it's already
+   tracked.
 2. **`.git/hooks/pre-push`** lists `benchmarks` in its `forbidden` set and
    aborts any push whose ref tree contains it, but only when the target remote
    matches `biodiversitycellatlas`/`upstream`. Note that the hook's bare
@@ -126,29 +128,24 @@ and never pushed:
 Verify both still work:
 
 ```bash
-git check-ignore -v benchmarks/CLAUDE.md      # -> .git/info/exclude:NN:benchmarks/
-git add benchmarks/                           # -> refused, "ignored by one of your .gitignore files"
+git check-ignore -v benchmarks/CLAUDE.md      # -> .git/info/exclude:NN:benchmarks/ (outside `local`)
 
 # exercise the hook without touching history (expect BLOCKED, exit 1)
-printf 'refs/heads/local-meta %s refs/heads/x 0000000000000000000000000000000000000000\n' "$(git rev-parse HEAD)" \
+printf 'refs/heads/local %s refs/heads/x 0000000000000000000000000000000000000000\n' "$(git rev-parse HEAD)" \
     | "$(git rev-parse --git-common-dir)/hooks/pre-push" upstream git@github.com:biodiversitycellatlas/bca-website.git
 ```
 
 Caveats, all inherited from the mechanism:
 
 - **The guards exist only in this clone.** They cannot be committed by design,
-  so a fresh clone has neither, and this directory does not exist there either.
-  Recreate both guards before recreating any benchmark.
+  so a fresh clone has neither, and this directory does not exist there either
+  unless it checks out `local`. Recreate both guards before recreating any
+  benchmark.
 - **`git push --no-verify` bypasses the hook.** The `info/exclude` layer still
-  holds, so the files cannot get into a commit in the first place.
-- **This is a git worktree**, so the sibling `local` worktree shares the same
-  exclude file and hook.
-- **Nothing here is backed up.** Because the directory is tracked on no branch,
-  it lives only on this disk. If you decide you want it on `origin` (the
-  biocorecrg fork) for safekeeping, that takes a deliberate
-  `git add -f benchmarks/` on `local`/`local-meta`; the pre-push hook will still
-  refuse to send it to `upstream`. Until someone makes that call, treat the
-  contents as disposable.
+  holds, so the files cannot get into a commit on any other branch in the
+  first place.
+- **This is a git worktree**, so sibling worktrees on other branches share the
+  same exclude file and hook.
 
 ## Adding a benchmark
 
@@ -167,8 +164,7 @@ Caveats, all inherited from the mechanism:
 - Report what was measured, including the parts that came out unexpectedly or
   disproved the hypothesis. The ULP drift in the staging report is an example:
   it was not the question being asked, and it belongs in the write-up anyway.
-- The scripts are ordinary Python and the prek hooks apply to them, untracked or
-  not:
+- The scripts are ordinary Python and the prek hooks apply to them:
 
   ```bash
   prek run --files benchmarks/scripts/*.py
