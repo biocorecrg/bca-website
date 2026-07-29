@@ -87,14 +87,28 @@ This is a local convenience, **not** a replacement for CI — Super-Linter remai
 
 ### Local-only files (kept off upstream)
 
-`compose.gambusia.yml`, `.pre-commit-config.yaml`, `CLAUDE.md`, and the whole **`.claude/` directory** are local conveniences that must **never** reach the `upstream` (biodiversitycellatlas) repo. `.gitignore` can't express this — it is itself committed and pushed, and cannot ignore files already tracked on `local-meta`. Two untracked, per-clone guards enforce it instead (both stored in the shared git dir, so they are never committed and never pushed):
+`compose.gambusia.yml`, `.pre-commit-config.yaml`, `CLAUDE.md`, and the whole **`.claude/`** and **`benchmarks/`** directories are local conveniences that must **never** reach the `upstream` (biodiversitycellatlas) repo. `.gitignore` can't express this — it is itself committed and pushed, and cannot ignore files already tracked on `local-meta`. Two untracked, per-clone guards enforce it instead (both stored in the shared git dir, so they are never committed and never pushed):
 
-- **`.git/info/exclude`** lists them, so `git add` won't stage them on any branch/worktree where they aren't already tracked (i.e. every upstream-destined branch). No effect on `local`/`local-meta`, where the first three are intentionally tracked.
+- **`.git/info/exclude`** lists them, so `git add` won't stage them on any branch/worktree where they aren't already tracked (i.e. every upstream-destined branch). No effect where they are already tracked, i.e. the first three on `local`/`local-meta` and `.claude/` on `local-meta`.
 - **`.git/hooks/pre-push`** aborts a push whose ref tree contains any of them, but only when the target remote matches `biodiversitycellatlas`/`upstream`. Pushes to `origin` and clean upstream branches (e.g. `main`) pass.
 
-The first three are *tracked* on the `local`/`local-meta` branches and pushed only to `origin` (the biocorecrg fork). **`.claude/` is different: it is tracked nowhere, on no branch, not even `local-meta`.** It holds this clone's agent definitions (`.claude/agents/*.md`) and `settings.local.json`, which are personal tooling config, not project content. It happens to be covered by a global gitignore (`~/.gitignore_global`) on this machine, but that is user-specific and absent on a fresh clone or another developer's machine — so the per-clone guards above list it explicitly and are the thing to rely on. Never `git add -f` anything under `.claude/`, on any branch. The cost is that the subagents referenced in this file do not exist in a fresh clone and must be recreated there, alongside the guards themselves.
+Which of them are tracked, and where:
 
-Caveats: these guards exist only in this clone — recreate them on a fresh clone (they can't be committed by design); `git push --no-verify` bypasses the hook (the `info/exclude` layer still holds); and because this is a git worktree, the sibling `local` worktree shares the same exclude + hook (harmless, since those files are legitimately tracked there).
+| path | tracked on | pushed to |
+| --- | --- | --- |
+| `compose.gambusia.yml`, `.pre-commit-config.yaml`, `CLAUDE.md` | `local`, `local-meta` | `origin` only (the biocorecrg fork) |
+| `.claude/` (`agents/*.md`, `settings.local.json`) | `local-meta` only | `origin/local-meta` only |
+| `benchmarks/` | **no branch at all** | nowhere; lives only on this disk |
+
+`.claude/` is personal tooling config rather than project content, so it is deliberately absent from `local` and from every upstream-destined branch; the `info/exclude` entry is what keeps it that way, and has no bearing on `local-meta`, where it is already tracked. It is also matched by a global gitignore (`~/.gitignore_global`) on this machine, which does nothing for already-tracked files and is user-specific anyway — so the per-clone guards above are the thing to rely on, not that. Do not `git add -f` anything under `.claude/` on any branch other than `local-meta`. A fresh clone that checks out anything but `local-meta` therefore has no `.claude/`, and the subagents referenced in this file must be recreated there, alongside the guards themselves.
+
+`benchmarks/` is the stricter case: excluded on every branch, so it cannot be staged anywhere without `-f`. See [`benchmarks/CLAUDE.md`](benchmarks/CLAUDE.md) for the consequences, including that it is not backed up.
+
+Caveats: these guards exist only in this clone — recreate them on a fresh clone (they can't be committed by design); `git push --no-verify` bypasses the hook (the `info/exclude` layer still holds); and because this is a git worktree, the sibling `local` worktree shares the same exclude + hook (harmless: the first three are legitimately tracked there, and the exclude just keeps `.claude/` and `benchmarks/` unstaged, which is what we want on `local` too).
+
+### Benchmarks (`benchmarks/`)
+
+Local-only performance/correctness benchmarks: harnesses in `benchmarks/scripts/`, dated write-ups in `benchmarks/reports/`. Tracked on no branch, guarded by the two mechanisms described above. **See [`benchmarks/CLAUDE.md`](benchmarks/CLAUDE.md)** for the inventory, how to run each one, and the conventions — including that the API benchmark hits the public production site by default.
 
 ### Static assets (Bun)
 
