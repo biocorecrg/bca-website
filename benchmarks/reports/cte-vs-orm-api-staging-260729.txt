@@ -1,0 +1,296 @@
+Markers API: CTE deployment (staging) vs ORM deployment (production)
+====================================================================
+
+Date:    2026-07-29
+Script:  benchmarks/scripts/bench_marker_api_cte_vs_orm.py (untracked)
+
+  staging (CTE)  https://bca-dev.hpc.crg.es              site version v26.7.29-demo
+  prod    (ORM)  https://portal.biodiversitycellatlas.org  site version v26.7.22-demo
+
+Same 16 scenarios as cte-vs-orm-api-260729.txt, which ran the local container against
+production. Here both sides are deployed sites, which removes the "local host on
+the LAN" asymmetry of that report, though not all of the environment
+differences.
+
+Staging was verified to be the CTE deployment by behaviour, not by reading its
+source: it accepts a request with fc_min_type omitted (the ORM filterset
+declares that parameter required, production returns HTTP 400) and it orders
+results by fold-change descending, which is what _MARKER_SQL's ORDER BY does.
+
+
+Which URL is actually measured
+------------------------------
+
+The user-facing URL is the atlas page, for example
+
+    /atlas/mus-musculus/markers/?metacells=B+cell&fc_min_type=mean&fc_min=2&fc_max_bg_type=ignore
+
+That page is an HTML template and carries none of the marker data. Its
+JavaScript (app/static/app/src/atlas/markers.ts, initMarkersTable) then fetches
+the JSON from the REST endpoint, which is what this benchmark times:
+
+    /api/v1/markers/?dataset=<slug>&metacells=...&fc_min_type=...&fc_min=...
+                    &fc_max_bg_type=ignore&limit=0
+
+limit=0 is what the page sends, and rest/pagination.py StandardPagination turns
+it into "return every row", so the response is a bare JSON array rather than a
+paginated envelope. Both deployments behave this way.
+
+Example of the triplet for scenario S12:
+
+    page  https://bca-dev.hpc.crg.es/atlas/mus-musculus/markers/?metacells=B+cell%2C7%2C12%2C30&fc_min_type=mean&fc_min=2&fc_max_bg_type=ignore
+    api   https://bca-dev.hpc.crg.es/api/v1/markers/?dataset=mus-musculus&metacells=B+cell%2C7%2C12%2C30&fc_min_type=mean&fc_min=2&fc_max_bg_type=ignore&limit=0
+    prod  https://portal.biodiversitycellatlas.org/atlas/mus-musculus/markers/?metacells=B+cell%2C7%2C12%2C30&fc_min_type=mean&fc_min=2&fc_max_bg_type=ignore
+
+
+How to run
+----------
+
+The script now takes both hosts from the environment, so one file covers every
+pairing. This report is the second row:
+
+    # local container vs production (the cte-vs-orm-api-260729.txt run)
+    python3 benchmarks/scripts/bench_marker_api_cte_vs_orm.py
+
+    # staging vs production (this report), about 6 to 7 minutes
+    CTE_BASE=https://bca-dev.hpc.crg.es CTE_LABEL=staging ORM_LABEL=prod \
+        python3 benchmarks/scripts/bench_marker_api_cte_vs_orm.py
+
+    # parity table only, 5 requests per host
+    CTE_BASE=https://bca-dev.hpc.crg.es CTE_LABEL=staging ORM_LABEL=prod \
+        PARITY_ONLY=1 python3 benchmarks/scripts/bench_marker_api_cte_vs_orm.py
+
+Host-side, stdlib only, no Django import. Read-only GETs, 2 repetitions per
+scenario per host with the host order alternated between repetitions, minimum
+reported. Requests to production are sequential with a 1s delay between them:
+32 timed requests plus 5 parity requests per host in a full run.
+
+
+READ THIS BEFORE THE TIMINGS
+----------------------------
+
+Still not a controlled A/B. Both hosts are now remote and behind TLS, so the
+gross LAN-versus-internet asymmetry of the earlier report is gone, but the two
+sites run on different hardware, with different database servers, different
+tuning, and different concurrent load. The wall times below say what a user
+experiences from here; they are not a measurement of the query rewrite in
+isolation. For that, see cte-vs-orm-260729.txt, where both implementations run against
+the same database on the same host (2.2x to 5.3x, median 3.1x).
+
+The JSON content comparison, by contrast, is exact and is the dependable half of
+this report.
+
+
+Results: 16 scenarios
+---------------------
+
+  #    scenario                                    items   staging     prod   ratio   staging B    prod B  order
+  ---  ------------------------------------------  ------  -------  -------  ------  ----------  --------  ------
+  S01  amphimedon-larva, 3 mcs, mean                    2    0.15s    0.60s   4.09x         447       447  DIFF
+  S02  amphimedon-larva, 3 mcs, median                  1    0.13s    0.61s   4.68x         223       223  same
+  S03  amphimedon-larva, cell type, mean                1    0.13s    0.46s   3.52x         224       224  same
+  S04  trichoplax, 3 mcs, mean                        133    0.24s    1.05s   4.45x      32,948    32,948  DIFF
+  S05  xenia, 5 mcs, median                           211    1.94s    9.32s   4.81x      48,198    48,198  DIFF
+  S06  mus-musculus, 1 mc, mean                       224    3.60s    8.22s   2.29x      58,144    58,144  DIFF
+  S07  mus-musculus, 1 mc, median                     224    3.65s    8.22s   2.25x      58,144    58,144  DIFF
+  S08  mus-musculus, 20 mcs, mean                     185    3.61s   10.81s   3.00x      48,108    48,106  DIFF
+  S09  mus-musculus, 20 mcs, median                   169    3.63s   10.78s   2.97x      43,983    43,984  DIFF
+  S10  mus-musculus, cell type (94 mcs), mean         235    3.92s    8.31s   2.12x      61,228    61,227  DIFF
+  S11  mus-musculus, 2 cell types (137 mcs), median    74    3.84s   11.90s   3.10x      19,338    19,337  DIFF
+  S12  mus-musculus, cell type + 3 mcs mixed, mean    152    3.90s   14.88s   3.81x      39,442    39,441  DIFF
+  S13  mus-musculus, 20 mcs, fc_min=0               15150    6.34s   13.27s   2.09x   3,761,226 3,761,232  DIFF
+  S14  mus-musculus, 20 mcs, fc_min=-9, median      15150    6.09s   13.56s   2.22x   3,761,226 3,761,247  DIFF
+  S15  mus-musculus, empty foreground                   0    3.03s    8.25s   2.72x           2         2  same
+  S16  schmidtea, 200 mcs, mean                        84    3.84s   10.52s   2.74x      23,262    23,262  DIFF
+
+Ratio (prod / staging): min 2.09x, median 2.98x, max 4.81x. Staging is faster in
+every scenario. Both deployments served all 64 timed requests with HTTP 200; no
+timeouts, no errors on either side.
+
+Same scenario coverage as the other two reports: five datasets spanning 300k to
+9.9M expression rows, foreground selected by metacell name, by cell-type name,
+and by a mix of both, foreground sizes from 1 to 200 metacells, both
+fc_min_type paths, three fc_min thresholds, and an empty foreground. All 16
+carry fc_max_bg_type=ignore, as the atlas page always sends it.
+
+
+Comparison with the local-container run
+---------------------------------------
+
+  measurement                    local vs prod        staging vs prod
+  -----------------------------  -------------------  -------------------
+  ratio min / median / max       2.27x / 4.05x / 6.76x  2.09x / 2.98x / 4.81x
+  CTE host, mus-musculus         2.3s to 2.5s         3.6s to 3.9s
+  CTE host, trichoplax           0.20s                0.24s
+  prod host, mus-musculus        8.2s to 14.8s        8.2s to 14.9s
+
+Production reproduced closely across the two runs (for example S12 14.78s then
+14.88s, S06 8.29s then 8.22s), which is a useful consistency check on the
+method. The ratio is lower here because staging is the slower of the two CTE
+hosts on the large datasets, about 1.5x slower than the local container on
+mus-musculus. That is a host and database difference, not a query difference:
+the same SQL runs on both.
+
+
+JSON content: same values, different ordering, last-bit float drift
+-------------------------------------------------------------------
+
+Compared per scenario, keyed on gene name: item count, the gene set, every
+payload field, and the key set of every item.
+
+  Item counts             identical in all 16 scenarios
+  Gene sets               identical in all 16 (no gene present on one side only)
+  Item keys               identical in all 16:
+                          bg_sum_umi, description, domains, fg_mean_fc,
+                          fg_median_fc, fg_sum_umi, genelists, id, name,
+                          umi_perc
+  Field values            no differences at a relative tolerance of 1e-9, on
+                          every field and every gene: the five numeric
+                          annotations plus id, description, domains and
+                          genelists compared exactly
+  Bit-identical payloads  in 7 of 16. In the other 9, fg_mean_fc differs in the
+                          last one or two bits on a minority of genes (see
+                          below)
+  Array ordering          DIFFERENT in 13 of 16
+
+The three "same order" scenarios are the trivial ones: S02 and S03 return a
+single item, S15 returns none. Every scenario with more than one item is in a
+different order on the two hosts.
+
+1. Ordering. Verified directly on each side, not inferred:
+
+     staging (CTE)  ordered by the selected foreground fold-change, descending.
+                    _MARKER_SQL ends with
+                        ORDER BY {having_col} DESC NULLS LAST, s.gene_id
+                    Checked: gene ids are not ascending in any of the 13
+                    multi-item scenarios; fold-change is monotonically
+                    non-increasing.
+
+     prod    (ORM)  ordered by gene primary key, ascending. Checked: ids are
+                    ascending in all 16 scenarios. The ORM plan drives the join
+                    from an Index Scan on app_gene_pkey and adds no sort, so
+                    rows emerge in gene id order.
+
+   Example, S06 (mus-musculus, metacell 7, mean), first three items:
+
+       staging  Lgals7, Krt14, Krt15          (highest fold-change first)
+       prod     Rpl7, Eef1b2, Igfbp2          (lowest gene id first)
+
+   And S04 (trichoplax, metacells 1,2,3, mean):
+
+       staging  Tadh_P64394, Tadh_wf_g698_t1, Tadh_P64116
+       prod     Tadh_P10696, Tadh_P13672, Tadh_P15889
+
+   Whether that matters depends on the consumer. For the atlas markers table it
+   is almost certainly invisible, since the table sorts client-side. For anyone
+   consuming /api/v1/markers/ directly, or slicing the array without an explicit
+   sort, the top of the list changed meaning: it now holds the strongest markers
+   instead of the lowest-numbered genes. Arguably the new order is the useful
+   one for a markers endpoint, but it is an unannounced contract change.
+
+2. Last-bit float drift. Sorting both payloads by gene id makes 7 of the 16
+   scenarios compare exactly equal as parsed JSON. The other 9 (S05, S08, S09,
+   S10, S11, S12, S13, S14, S16) do not, and the response sizes differ by a
+   handful of bytes, because a few float values print with a different final
+   digit. Quantified on three of them with a dedicated probe:
+
+     scenario                      field         genes differing   max relative diff
+     ----------------------------  ------------  ---------------  ------------------
+     S05 xenia, 5 mcs, median      fg_mean_fc          13 / 211            3.65e-16
+     S08 mouse, 20 mcs, mean       fg_mean_fc           3 / 185            2.87e-16
+     S13 mouse, 20 mcs, fc_min=0   fg_mean_fc         189 / 15150          5.65e-16
+
+   In all three, bg_sum_umi, fg_sum_umi, umi_perc and fg_median_fc are
+   bit-identical for every gene, and id, description, domains and genelists
+   match exactly. Only the mean drifts. Example, the worst case in S08:
+
+       staging  3.0927132261260257
+       prod     3.0927132261260266
+
+   That is one to two units in the last place of a double, roughly 1e-16
+   relative. The cause is that floating-point addition is not associative and
+   the two plans accumulate AVG() in different row orders (the CTE aggregates
+   in covering-index order, the ORM aggregates in gene-driven join order, and
+   parallel workers may partial-aggregate differently again). The sums are
+   integral-valued and so land exactly; the median is a selected value, not a
+   sum, so it does not drift; only the average does.
+
+   Consequences: none observed. Item counts are identical in all 16 scenarios,
+   so no gene sitting near the fc_min threshold flipped in or out, and no
+   ordering change is attributable to it. But it does mean the payloads are not
+   bit-reproducible across the two deployments, so a test asserting exact float
+   equality against a stored fixture would be fragile. A 1e-12 tolerance is
+   ample.
+
+   Note that the earlier local-container run showed no such drift: response
+   sizes were byte-equal in all 16 scenarios there. This is consistent with the
+   drift depending on the database server and its parallelism settings, not on
+   the CTE rewrite itself.
+
+
+Parameter parity
+----------------
+
+Item counts, one request per host. Reproduces at the HTTP level what
+cte-vs-orm-260729.txt found at the query level, and matches the local-versus-prod run
+exactly.
+
+  query parameters                            staging (CTE)     prod (ORM)
+  ------------------------------------------  ----------------  --------------
+  fc_max_bg_type=ignore + fc_max_bg=1.2                    133             133
+  fc_max_bg_type=mean + fc_max_bg=1.2                      133             132
+  fc_max_bg_type=median + fc_max_bg=1.2                    133             133
+  fc_min_type omitted                                      133        HTTP 400
+  metacells empty                                     HTTP 400        HTTP 400
+
+  (dataset trichoplax-adhaerens, metacells 1,2,3, fc_min 2, fc_min_type mean
+  unless stated)
+
+Two differences, both already documented in cte-vs-orm-260729.txt:
+
+1. fc_max_bg / fc_max_bg_type are silently ignored by the CTE deployment.
+   Production applies them: 132 items instead of 133 for fc_max_bg_type=mean.
+   Staging accepts the parameters, returns 200, and ignores them.
+
+   Context: the production implementation is itself wrong.
+   rest/filters.py:871 reads
+
+       fc_max_bg = self.data.get("fc_min", 3)
+
+   so it thresholds on fc_min's value rather than fc_max_bg, which is why
+   fc_max_bg=1.2 with median changes nothing on production either. The rewrite
+   dropped a filter that never worked as documented, but both deployments still
+   advertise the parameters in the OpenAPI schema.
+
+2. fc_min_type omitted: staging defaults to mean and returns 200; production
+   returns HTTP 400, because the filterset declares the parameter required.
+   A more forgiving API, but a contract change.
+
+Both deployments reject empty metacells with HTTP 400.
+
+
+Caveats
+-------
+
+- The timing halves of this report are not a controlled comparison; see the
+  warning above. Only the JSON comparison is exact.
+- Timings are the minimum of two runs per host per scenario, with the host order
+  alternated. They are not a statistical distribution, and both sites serve
+  other traffic.
+- Both deployments expose the same 16 dataset slugs, checked via
+  /api/v1/datasets/ before the run, so the two databases are the same data
+  version. This is what makes the content comparison meaningful.
+- Gene ids agree between the two deployments (id is one of the compared fields
+  and showed zero differences on every gene in every scenario), so the two
+  databases were ingested identically.
+- The site version strings differ, v26.7.29-demo on staging against
+  v26.7.22-demo on production, read from the rendered home page. Which commits
+  those tags point at was not verified from here, so "staging is the CTE
+  deployment" rests on the two behavioural probes described at the top, not on
+  the tag.
+- Production received 37 read-only GETs in a full run, sequentially, with a 1s
+  delay between them, plus 3 extra requests for the float-drift probe.
+- benchmarks/scripts/bench_marker_api_cte_vs_orm.py was generalised for this run (host
+  bases and labels now come from the environment, and the comparison also
+  reports bit-level equality after sorting by id). No application code was
+  touched, so no test run was warranted. The script passes all prek hooks.
