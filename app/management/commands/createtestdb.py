@@ -29,11 +29,12 @@ from app.models import (
     QualityControl,
     DatasetQualityControl,
     DBVersion,
-    SAMap,
     MetacellType,
+    MetacellTypeSimilarity,
     GeneCorrelation,
     GeneModule,
     GeneModuleEigengene,
+    ExpressionConservation,
     Meta,
     SpeciesFile,
 )
@@ -46,7 +47,7 @@ def setup_test_environment():
 def create_tgrm_extension():
     """Installs the pg_trm search extension"""
     with connection.cursor() as cursor:
-        cursor.execute("create extension pg_trgm;")
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
 
 
 class Command(BaseCommand):
@@ -82,7 +83,7 @@ class Command(BaseCommand):
         self.create_metacells()
         self.create_singlecells()
         self.create_quality_data()
-        self.create_samaps()
+        self.create_metacell_type_similarity()
         self.create_all_genecorrelations()
         self.create_all_eigengene_values()
         self.create_species_files()
@@ -196,6 +197,34 @@ class Command(BaseCommand):
         factories.OrthologFactory.create(species=self.sponge, gene=sponge_genes[3], orthogroup=orthogroup1)
         factories.OrthologFactory.create(species=self.homo, gene=homo_genes[2], orthogroup=orthogroup1)
 
+        ExpressionConservation.objects.create(
+            orthogroup=orthogroup0,
+            gene=homo_genes[1],
+            gene2=sponge_genes[0],
+            dataset=self.homo_dataset,
+            dataset2=self.sponge_dataset,
+            conservation_score=0.85,
+            is_one_to_one=True,
+        )
+        ExpressionConservation.objects.create(
+            orthogroup=orthogroup0,
+            gene=homo_genes[1],
+            gene2=sponge_genes[1],
+            dataset=self.homo_dataset,
+            dataset2=self.sponge_dataset,
+            conservation_score=0.72,
+            is_one_to_one=True,
+        )
+        ExpressionConservation.objects.create(
+            orthogroup=orthogroup1,
+            gene=homo_genes[2],
+            gene2=sponge_genes[2],
+            dataset=self.homo_dataset,
+            dataset2=self.sponge_dataset,
+            conservation_score=0.91,
+            is_one_to_one=True,
+        )
+
     @staticmethod
     def create_metacell_links(dataset, metacells):
         for m1, m2 in itertools.combinations(metacells, 2):
@@ -292,13 +321,13 @@ class Command(BaseCommand):
         Meta.objects.create(species=self.homo, key="phylum", value="Chordata", source=ncbi, query_term="7711")
         Meta.objects.create(species=self.sponge, key="phylum", value="Porifera", source=ncbi, query_term="6040")
 
-    def create_samaps(self):
+    def create_metacell_type_similarity(self):
         metacelltypes = MetacellType.objects.all()
         for t1, t2 in itertools.combinations(metacelltypes, 2):
-            SAMap.objects.create(
+            MetacellTypeSimilarity.objects.create(
                 metacelltype=t1,
                 metacelltype2=t2,
-                samap=self.fake.pyfloat(left_digits=2, right_digits=2, min_value=0.01, max_value=50),
+                samap_score=self.fake.pyfloat(left_digits=2, right_digits=2, min_value=0.01, max_value=1),
             )
 
     def create_genecorrelations(self, species, dataset):
