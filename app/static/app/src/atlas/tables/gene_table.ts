@@ -59,10 +59,9 @@ export function createGeneTable(
     if (correlation) {
         cols = cols.concat([
             { name: "pearson", data: "pearson", title: "Pearson's r" },
-            { name: "spearman", data: "spearman", title: "Spearman's rho" },
         ]);
 
-        order = { name: "pearson_r", dir: "desc" };
+        order = { name: "pearson", dir: "desc" };
     }
 
     // Gene selection mode

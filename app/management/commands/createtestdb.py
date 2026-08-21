@@ -1,3 +1,4 @@
+import gzip
 import itertools
 import os
 import random
@@ -7,6 +8,7 @@ from typing import TextIO
 import factory.random
 import h5py
 import numpy as np
+from django.conf import settings
 from django.core.files import File as DjangoFile
 from django.core.management.base import BaseCommand
 from django.db import connection
@@ -22,7 +24,7 @@ from app.models import (
     Gene,
     GeneModuleMembership,
     Metacell,
-    MetacellLink,
+    MetacellEdge,
     SingleCell,
     Source,
     DatasetFile,
@@ -37,7 +39,18 @@ from app.models import (
     ExpressionConservation,
     Meta,
     SpeciesFile,
+    GlobalFile,
 )
+from scripts.tests.build_go_obo import GeneOntologyOboBuilder
+
+OUTPUT_DIR = settings.MEDIA_ROOT
+
+
+def get_filepath(filename, dir=None):
+    """Path to file in a given directory."""
+    if dir is None:
+        dir = OUTPUT_DIR
+    return os.path.join(dir, filename)
 
 
 def setup_test_environment():
@@ -73,6 +86,7 @@ class Command(BaseCommand):
         """
         Database creation
         """
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
         setup_test_environment()
         create_tgrm_extension()
         self.create_datasets()
@@ -87,6 +101,7 @@ class Command(BaseCommand):
         self.create_all_genecorrelations()
         self.create_all_eigengene_values()
         self.create_species_files()
+        self.save_go_file()
         self.stdout.write(self.style.SUCCESS("Successfully created Test Database"))
 
     def create_datasets(self):
@@ -229,7 +244,7 @@ class Command(BaseCommand):
     def create_metacell_links(dataset, metacells):
         for m1, m2 in itertools.combinations(metacells, 2):
             if random.random() < 0.2:
-                MetacellLink.objects.create(dataset=dataset, metacell=m1, metacell2=m2)
+                MetacellEdge.objects.create(dataset=dataset, metacell=m1, metacell2=m2)
 
     def create_metacells(self):
         factories.MetaCellTypeFactory.create_batch(size=9, dataset=self.sponge_dataset)
@@ -265,7 +280,7 @@ class Command(BaseCommand):
             )
 
     def create_hdf5_file(self, dataset, genes, singlecells):
-        output_file = f"{dataset.slug}-singlecell_umifrac.hdf5"
+        output_file = get_filepath(f"{dataset.slug}-singlecell_umifrac.hdf5")
         with h5py.File(output_file, "w") as root:
             root.create_dataset("cell_names", data=singlecells, dtype=h5py.string_dtype())
             num_sc = len(singlecells) // 10
@@ -367,7 +382,7 @@ class Command(BaseCommand):
             SpeciesFile.objects.get_or_create(species=species, type=kind, defaults={"file": django_file})
 
     def create_fasta_file(self, species, genes):
-        output_file = f"{species} - Proteome.fasta"
+        output_file = get_filepath(f"{species} - Proteome.fasta")
         with open(output_file, "w") as f:
             for gene in genes:
                 sequence = self.fake.bothify(
@@ -389,10 +404,18 @@ class Command(BaseCommand):
     def create_species_files(self):
         sponge_genes = list(self.sponge.genes.values_list("name", flat=True))
         input_file = self.create_fasta_file(self.sponge, sponge_genes)
-        output_file = f"{self.sponge.scientific_name} - DIAMOND.dmnd"
+        output_file = get_filepath(f"{self.sponge.scientific_name} - DIAMOND.dmnd")
         self.create_diamond_database(self.sponge, input_file, output_file)
 
         homo_genes = list(self.homo.genes.values_list("name", flat=True))
         input_file = self.create_fasta_file(self.homo, homo_genes)
-        output_file = f"{self.homo.scientific_name} - DIAMOND.dmnd"
+        output_file = get_filepath(f"{self.homo.scientific_name} - DIAMOND.dmnd")
         self.create_diamond_database(self.homo, input_file, output_file)
+
+    @staticmethod
+    def save_go_file():
+        builder = GeneOntologyOboBuilder()
+        builder.prepare_filtered_go_obo()
+        with gzip.open(builder.output_file.with_suffix(".obo.gz"), "rb") as f:
+            django_file = DjangoFile(f, name=os.path.basename(builder.output_file))
+            GlobalFile.objects.get_or_create(type="go-basic-obo", defaults={"file": django_file})
