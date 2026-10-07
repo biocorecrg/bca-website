@@ -45,9 +45,9 @@ podman compose exec web djlint .            # check
 podman compose exec web djlint . --reformat # fix
 
 # Super-Linter (runs in CI on every PR); replicate locally:
-./superlinter.sh check                      # changed files
-./superlinter.sh fix --python --js          # fix, specific linters
-./superlinter.sh fix --all                  # whole codebase
+./scripts/superlinter.py check              # changed files
+./scripts/superlinter.py fix --python --js  # fix, specific linters
+./scripts/superlinter.py fix --all          # whole codebase
 
 # Pre-commit hooks (run with prek: https://github.com/j178/prek)
 prek install                                # install the git pre-commit hook (one-time)

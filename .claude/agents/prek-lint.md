@@ -12,8 +12,8 @@ things, or "improve" logic beyond what a hook demands.
 
 `prek` runs on the **host**, not in the `web` container (unlike pytest). It is on PATH via
 pyenv shims; `pre-commit` also works if `prek` is missing. The config is
-`.pre-commit-config.yaml` at the repo root — a local convenience on the `local`/`local-meta`
-branches only. CI Super-Linter remains the source of truth and runs a wider ruleset
+`.pre-commit-config.yaml` at the repo root — a local convenience on the `local`
+branch only. CI Super-Linter remains the source of truth and runs a wider ruleset
 (full ruff, ESLint, Stylelint, gitleaks, checkov, jscpd); passing prek does not guarantee
 CI is green, and you should say so when relevant.
 
