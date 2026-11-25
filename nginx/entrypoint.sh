@@ -9,10 +9,27 @@ if [ "$ENVIRONMENT" = "prod" ] && [ "$NODE_TLS_REJECT_UNAUTHORIZED" != "1" ]; th
 fi
 
 # Ensure directory exists
-mkdir -p /etc/nginx/conf.d
+mkdir -p /etc/nginx/conf.d /etc/nginx/bots.d
+
+# Seed ngxblocker files from the image into the active locations.
+# Running on every start keeps the active files in sync with whatever was
+# vendored into the image; the background update loop then overlays the
+# latest upstream version a week after boot and daily thereafter.
+if [ -d /etc/nginx/bot-blocker-seed ]; then
+    cp /etc/nginx/bot-blocker-seed/conf.d/*.conf /etc/nginx/conf.d/
+    cp /etc/nginx/bot-blocker-seed/bots.d/*.conf /etc/nginx/bots.d/
+fi
+
+# Pick the first nameserver from the container's resolv.conf so nginx
+# can re-resolve upstream hostnames at request time (see the `resolver`
+# directive in the template). Fall back to Docker/Podman's standard
+# internal DNS address if nothing is found.
+RESOLVER="$(awk '/^nameserver/ {print $2; exit}' /etc/resolv.conf 2>/dev/null)"
+export RESOLVER="${RESOLVER:-127.0.0.11}"
+echo "[NGINX] Using DNS resolver: $RESOLVER"
 
 # Substitute variables into config
-envsubst '$DJANGO_HOSTNAME $GHOST_HOSTNAME $GHOST_INTERNAL_URL $PLAUSIBLE_HOSTNAME' \
+envsubst '$DJANGO_HOSTNAME $GHOST_HOSTNAME $PLAUSIBLE_HOSTNAME $RESOLVER' \
     </etc/nginx/nginx.prod.conf.template \
     >/etc/nginx/conf.d/default.conf
 
@@ -25,6 +42,12 @@ mkdir -p /etc/nginx/certs
 # Link the cert and key dynamically from env vars
 ln -sf "/certs/$CERT_FILE" /etc/nginx/certs/server.crt
 ln -sf "/certs/$CERT_KEY_FILE" /etc/nginx/certs/server.key
+
+# Background update loop for ngxblocker. Only started if the script was
+# baked into the image (production build); harmless if missing.
+if [ -x /usr/local/bin/update-ngxblocker.sh ]; then
+    /usr/local/bin/update-ngxblocker.sh &
+fi
 
 echo "[NGINX] Starting server..."
 exec nginx -g 'daemon off;'
